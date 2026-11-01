@@ -56,6 +56,7 @@ object ChatCopy {
         null -> null
         ExchangeStatus.Working -> (if (place.isNullOrBlank()) tr(R.string.chat_working) else tr(R.string.chat_working_on, place)) to Tone.Accent
         ExchangeStatus.WaitingUnlock -> tr(R.string.chat_wait_unlock) to Tone.Warn
+        is ExchangeStatus.Queued -> tr(R.string.chat_queued) to Tone.Accent
         is ExchangeStatus.NeedsTakeover, is ExchangeStatus.NeedsInput,
         is ExchangeStatus.NeedsConfirmation, is ExchangeStatus.Paused -> tr(R.string.chat_waiting_for_you) to Tone.Warn
         else -> null
@@ -86,6 +87,23 @@ object ChatCopy {
 
     /** 在后台操作手机时步骤下面那行小字。 */
     val BACKGROUND_NOTE get() = tr(R.string.chat_background_note)
+
+    /**
+     * 一个动作的结果(记录里的 effect 代号 → 给人看的一句话)。错误码只对开发有意义,
+     * 给人看的一律说「没成功」。运行过程页用的是同一份说法。
+     */
+    fun effectLabel(effect: String?): String = when (effect) {
+        "changed", "done", "place_changed" -> tr(R.string.result_effective)
+        "small_change" -> tr(R.string.effect_small_change)
+        "unchanged", "no_effect" -> tr(R.string.result_unchanged)
+        "completed" -> tr(R.string.result_completed)
+        null, "" -> ""
+        else -> tr(R.string.step_failed)
+    }
+
+    /** 点开一步后每件事一行:做了什么 · 对什么 · 结果(结果为空时不写)。 */
+    fun actionLine(a: StepAction): String =
+        listOfNotNull(a.label, a.target?.takeIf(String::isNotBlank), effectLabel(a.effect).takeIf(String::isNotBlank)).joinToString(" · ")
 
     fun placeholder(mode: ComposerMode, hasHistory: Boolean): String = when (mode) {
         ComposerMode.Busy -> tr(R.string.chat_placeholder_busy)

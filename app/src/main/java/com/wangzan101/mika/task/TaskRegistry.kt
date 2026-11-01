@@ -5,6 +5,7 @@ import com.wangzan101.mika.core.run.RunId
 import com.wangzan101.mika.core.run.RunPhase
 import com.wangzan101.mika.core.run.RunStore
 import com.wangzan101.mika.core.run.StoredRun
+import com.wangzan101.mika.core.uistate.AppWait
 
 sealed interface StartResult<out R> {
     data class Started<R>(val run: R) : StartResult<R>
@@ -64,6 +65,20 @@ class TaskCenter<R : Any>(
     @Synchronized
     fun reserve(pkg: String, owner: String, stillUsed: () -> Boolean): Boolean {
         return resources.reserveApp(pkg, owner, { byKey(it) != null }, stillUsed)
+    }
+
+    /** 任务 [owner] 此刻能不能占 [pkg](只查不占,规则同 [reserve])。 */
+    @Synchronized
+    fun appFree(pkg: String, owner: String, stillUsed: () -> Boolean): Boolean =
+        resources.appFree(pkg, owner, { byKey(it) != null }, stillUsed)
+
+    /**
+     * 任务 [owner] 等别的任务放开 [pkg],最多 [timeoutMs](见 [ResourceScheduler.awaitApp]:互相等的不等)。
+     * 挂起着等,不拿这里的锁;在不在跑按开始等那一刻的任务名单认。
+     */
+    suspend fun awaitApp(pkg: String, owner: String, timeoutMs: Long, free: suspend () -> Boolean): AppWait {
+        val active = synchronized(this) { runs().map(keyOf).toSet() }
+        return resources.awaitApp(pkg, owner, timeoutMs, { it in active }, free)
     }
 
     /** 还在排队就移出队伍并返回 true(调用方记为已取消);已经开跑返回 false,由任务自己取消。 */

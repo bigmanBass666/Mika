@@ -37,7 +37,7 @@
     <string name="mcp_cli_install">1. Set up your computer</string>
     <string name="mcp_cli_install_sub">Send the install guide to your computer AI, or follow it on the computer yourself.</string>
     <string name="mcp_copy_install">Copy install guide</string>
-    <string name="mcp_cli_install_prompt">Follow https://github.com/wangzan101/Mika/blob/main/docs/cli.en.md to install Mika CLI or the Skill for this agent. Use the connection method selected on the phone: USB uses authorized ADB; Wi-Fi/private VPN uses the HTTP address and a private token file. Run connect to verify the connection. With only the Skill, use its bundled script. Do not submit phone tasks or print tokens in the conversation.</string>
+    <string name="mcp_cli_install_prompt">Follow https://github.com/wangzan101/Mika/blob/main/docs/agent-quickstart.en.md to install Mika CLI or the Skill for this agent. Use the connection method selected on the phone: USB uses authorized ADB; Wi-Fi/private VPN uses the HTTP address and a private token file. Run connect to verify the connection. With only the Skill, use its bundled script. Do not submit phone tasks or print tokens in the conversation.</string>
     <string name="mcp_cli_connect">2. Connect the phone</string>
     <string name="mcp_cli_connect_sub">Run on your computer over USB or paired wireless debugging. connect verifies the connection. With only the Skill, ask the agent to run its bundled client.</string>
     <string name="mcp_copy_command">Copy command</string>

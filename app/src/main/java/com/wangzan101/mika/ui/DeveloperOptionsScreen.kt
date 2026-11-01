@@ -89,10 +89,11 @@ fun DeveloperOptionsScreen(
                 }
             }
         }
-        if (onOpenRunStats != null) {
-            GroupLabel(tr(R.string.dev_run_log))
-            GroupCard {
-                ListRow(null, RunMetricsCopy.STATS_TITLE, RunMetricsCopy.STATS_SUBTITLE, first = true, onClick = onOpenRunStats) { RowChevron() }
+        GroupLabel(tr(R.string.dev_run_log))
+        GroupCard {
+            TraceSettingsRows()
+            if (onOpenRunStats != null) {
+                ListRow(null, RunMetricsCopy.STATS_TITLE, RunMetricsCopy.STATS_SUBTITLE, onClick = onOpenRunStats) { RowChevron() }
             }
         }
         FooterNote(DEVELOPER_NOTE)

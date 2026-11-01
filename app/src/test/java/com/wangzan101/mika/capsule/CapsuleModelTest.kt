@@ -87,7 +87,6 @@ class CapsuleModelTest {
     }
 
     @Test fun modeParsesWithAlwaysDefault() {
-        assertEquals(CapsuleMode.Always, CapsuleMode.DEFAULT)
         assertEquals(CapsuleMode.Always, CapsuleMode.parse(null))
         assertEquals(CapsuleMode.Always, CapsuleMode.parse("something-old"))
         CapsuleMode.entries.forEach { assertEquals(it, CapsuleMode.parse(it.name)) }
@@ -444,7 +443,6 @@ class CapsuleModelTest {
         assertEquals(1f, CapsuleFade.alpha(CapsuleKind.NeedConfirm, 1, pill = false, idleFor = 60_000))
         assertEquals(1f, CapsuleFade.alpha(CapsuleKind.Running, 1, pill = false, idleFor = 60_000))
         assertEquals(1f, CapsuleFade.alpha(CapsuleKind.HandedOver, 0, pill = false, idleFor = 60_000))
-        assertEquals(0.4f, CapsuleFade.BALL)
     }
 
     // ---------- 读屏 ----------

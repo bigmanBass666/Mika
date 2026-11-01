@@ -14,6 +14,18 @@ import org.junit.Test
 class StatusCopyTest {
     @get:Rule val texts = ChineseTexts()
 
+    // 频道设置页打不开时依次退回,第一个能开的就停
+    @Test
+    fun firstThatStartsFallsBack() {
+        val tried = mutableListOf<String>()
+        assertTrue(firstThatStarts(listOf("channel", "app")) { tried += it; it == "app" })
+        assertEquals(listOf("channel", "app"), tried)
+        tried.clear()
+        assertTrue(firstThatStarts(listOf("channel", "app")) { tried += it; true })
+        assertEquals(listOf("channel"), tried)
+        assertFalse(firstThatStarts(listOf("channel", "app")) { false })
+    }
+
     @Test
     fun paymentLinesOnePerField() {
         assertEquals("商品:拿铁 大杯\n金额:¥18\n地址:公司前台", StatusCopy.paymentLines("拿铁 大杯", "¥18", "公司前台"))
@@ -60,17 +72,5 @@ class StatusCopyTest {
         val e = StatusCopy.explain(resultOnly, "14")
         assertEquals("去打开", e.action)
         assertEquals(Fix.OpenResultChannel, e.fix)
-    }
-
-    // 频道设置页打不开时依次退回,第一个能开的就停
-    @Test
-    fun firstThatStartsFallsBack() {
-        val tried = mutableListOf<String>()
-        assertTrue(firstThatStarts(listOf("channel", "app")) { tried += it; it == "app" })
-        assertEquals(listOf("channel", "app"), tried)
-        tried.clear()
-        assertTrue(firstThatStarts(listOf("channel", "app")) { tried += it; true })
-        assertEquals(listOf("channel"), tried)
-        assertFalse(firstThatStarts(listOf("channel", "app")) { false })
     }
 }

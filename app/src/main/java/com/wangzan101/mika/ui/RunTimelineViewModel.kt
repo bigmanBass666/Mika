@@ -58,6 +58,8 @@ data class TimelineHeader(
     val goal: String,
     val criteria: List<String>,
     val outcome: String,
+    /** 这次运行还没结束:结局、核查、统计都还没写齐,页面按秒接着读(见 [RunTimelineScreen])。 */
+    val running: Boolean = false,
     val verdict: String,
     val duration: String?,
     val modelCalls: Int,
@@ -82,6 +84,11 @@ class RunTimelineViewModel(
     private val store: RunStore, val runId: String,
     private val toolLabels: ToolLabels = ToolLabels(knownTools()),
     private val resolveMemory: (List<String>) -> List<String> = { emptyList() },
+    /**
+     * 这次运行的任务此刻还在跑。没有结束记录、任务也不在了(进程被杀、记录写到一半)的运行算已结束,
+     * 页面不为它一直按秒重读。
+     */
+    private val alive: (runId: String) -> Boolean = { false },
 ) {
     fun load(): TimelineUi {
         val summary = store.list().firstOrNull { it.id == runId }
@@ -97,6 +104,8 @@ class RunTimelineViewModel(
                 ?: events.filterIsInstance<RunEvent.Criteria>().lastOrNull()?.criteria.orEmpty(),
             outcome = outcomeLabel(summary?.outcome ?: ended?.outcome,
                 summary?.judged ?: events.filterIsInstance<RunEvent.OutcomeJudged>().lastOrNull()?.outcome),
+            // 结束事件或结束时间只要有一个就算跑完了;都没有时还要任务真在跑,界面据此决定要不要按秒重读
+            running = ended == null && summary?.endedAtMs == null && alive(runId),
             verdict = verdictLabel(summary?.verdict ?: events.filterIsInstance<RunEvent.Verifier>().lastOrNull()?.verdict),
             duration = endMs?.let { duration(it - startMs) },
             modelCalls = events.count { it is RunEvent.ModelReply },
@@ -282,6 +291,10 @@ class RunTimelineViewModel(
             "payment_requires_takeover" to tr(R.string.err_payment),
             "finish_missing_evidence" to tr(R.string.err_no_evidence),
             "double_click_unsupported" to tr(R.string.err_double_click),
+            "app_blocked" to tr(R.string.err_app_blocked),
+            "app_access_unverified" to tr(R.string.err_app_unverified),
+            "app_access_unavailable" to tr(R.string.err_app_unavailable),
+            "app_access_protected" to tr(R.string.err_app_protected),
         )
 
         private fun verifierTag(verdict: String) = when (verdict) {

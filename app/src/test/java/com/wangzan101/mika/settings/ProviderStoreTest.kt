@@ -18,7 +18,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -158,7 +157,7 @@ class ProviderStoreTest {
     }
 
     @Test
-    fun visionSameAsMainUsesMainAndSendsImagesWithoutChangingMainItself() {
+    fun visionSameAsMainUsesMainAndMainItselfSeesUntilSwitchedAway() {
         val s = store()
         s.saveAsMain(cfg("a", vision = false), "sk-a")
         assertTrue(s.choose(ModelRole.Vision, RoleChoice.SameAsMain))
@@ -168,9 +167,59 @@ class ProviderStoreTest {
         s.modelFor(ModelRole.Vision)
         assertTrue(built.last().first.capabilities.vision)
         assertEquals("sk-a", built.last().second)
-        assertFalse("主模型自己办事仍按它存着的标记", s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertTrue("用户说了主模型能看图,主模型自己办事也直接看截图", s.configFor(ModelRole.Main)!!.capabilities.vision)
         // 重开仍在
         assertEquals(RoleChoice.SameAsMain, store().roles.value.vision)
+        assertTrue(s.choose(ModelRole.Vision, RoleChoice.Off))
+        assertFalse("换走了就回到存着的标记", s.configFor(ModelRole.Main)!!.capabilities.vision)
+    }
+
+    @Test
+    fun pickingTheMainModelAsVisionModelMakesMainSeeAndSwitchingAwayUndoesIt() {
+        val s = store()
+        val p = connected(s)
+        assertTrue(s.use(ModelRole.Main, p.id, "m1", none))
+        assertTrue(s.use(ModelRole.Vision, p.id, "m1", none))
+        assertTrue(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        s.modelFor(ModelRole.Main)
+        assertTrue("建出来的主模型附图", built.last().first.capabilities.vision)
+        assertTrue(s.use(ModelRole.Vision, p.id, "m2", none))
+        assertFalse("看图换成别的模型,主模型回到列表和初值说的", s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertFalse("没改存着的配置", store().list().first { it.model == "m1" }.capabilities.vision)
+    }
+
+    @Test
+    fun userSaysModelCanSeeOverridesUnknownAndPersists() {
+        val s = store()
+        val p = connected(s)
+        assertTrue(s.use(ModelRole.Main, p.id, "m1", none))
+        assertFalse("列表没写,按初值", s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertTrue(s.setModelVision(p.id, "m1", true))
+        assertTrue(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        val reopened = store()
+        assertEquals(mapOf("m1" to true), reopened.provider(p.id)!!.visionOverrides)
+        assertTrue("重开仍在", reopened.configFor(ModelRole.Main)!!.capabilities.vision)
+        // 用户也能关掉:看图用主模型时主模型也按用户说的不附图,看图这一路照旧
+        assertTrue(s.choose(ModelRole.Vision, RoleChoice.SameAsMain))
+        assertTrue(s.setModelVision(p.id, "m1", false))
+        assertFalse(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertTrue(s.configFor(ModelRole.Vision)!!.capabilities.vision)
+        assertFalse(s.setModelVision("missing", "m1", true))
+    }
+
+    @Test
+    fun listingSaysNoVisionStaysNoUnlessTheUserOverrides() {
+        val s = store()
+        val p = s.connect("P", ProviderConfig.Kind.OpenAiCompat, "https://p.test/v1", "k", listOf(ListedModel("m1", toolCalls = true, vision = false)))
+        val o = ModelOptions.ofProvider(s.provider(p.id)!!, s.list()).single()
+        assertFalse(o.canSee)
+        assertTrue(s.use(ModelRole.Main, p.id, "m1", o.capabilities))
+        assertFalse(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertTrue(s.setModelVision(p.id, "m1", true))
+        assertTrue(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        val after = ModelOptions.ofProvider(s.provider(p.id)!!, s.list()).single()
+        assertTrue(after.canSee)
+        assertEquals(true, after.visionByUser)
     }
 
     @Test
@@ -201,8 +250,7 @@ class ProviderStoreTest {
         val vision = s.configFor(ModelRole.Vision)!!
         assertEquals("m1" to "m2", main.model to vision.model)
         assertTrue("选作主模型就记工具调用", main.capabilities.toolCalls)
-        assertTrue("选作看图就记看图", vision.capabilities.vision)
-        assertTrue(store().list().first { it.model == "m2" }.capabilities.vision)
+        assertTrue("选作看图就算能看图", vision.capabilities.vision)
         // 轻量不要求任何能力
         assertTrue(s.use(ModelRole.Light, p.id, "m2", none))
         assertEquals(vision.id, s.configFor(ModelRole.Light)?.id)
@@ -345,6 +393,64 @@ class ProviderStoreTest {
         assertEquals(emptyList<ListedModel>(), store().providers.value.single().models)
     }
 
+    // ---------- 跳过测试直接存下 ----------
+
+    /** 跳过测试存下的那家带标记;重新读文件也在(旧版本的文件没有这一项,按测过算)。 */
+    @Test
+    fun untestedProviderPersistsItsFlag() {
+        val s = store()
+        val p = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k", emptyList(), untested = true)
+        assertTrue(p.savedUntested)
+        assertTrue("重新读入还在", store().provider(p.id)!!.savedUntested)
+        // 不是跳过测试存下的那些没有这个标记
+        val other = s.connect("Y", ProviderConfig.Kind.OpenAiCompat, "https://y.test/v1", "k", emptyList())
+        assertFalse(other.savedUntested)
+        assertFalse(store().provider(other.id)!!.savedUntested)
+    }
+
+    /** 列过一次模型、或试通过一个模型,「没测过」就不再成立。 */
+    @Test
+    fun listingOrVerifyingClearsTheUntestedFlag() {
+        val s = store()
+        val listed = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k", emptyList(), untested = true)
+        s.rememberModels(listed.id, listOf(ListedModel("m1")))
+        assertFalse("列出来了就算测过", store().provider(listed.id)!!.savedUntested)
+
+        val verified = s.connect("Z", ProviderConfig.Kind.OpenAiCompat, "https://z.test/v1", "k", emptyList(), untested = true)
+        assertTrue(s.provider(verified.id)!!.savedUntested)
+        s.markVerified(verified.id, "m1")
+        assertFalse("核实过就算测过", s.provider(verified.id)!!.savedUntested)
+        assertEquals(setOf("m1"), s.provider(verified.id)!!.verifiedModels)
+    }
+
+    /** 主模型在它那家还没测试通过(没有列表、手填、没核实)时给出那一家;核实过、或这家有列表时不算。 */
+    @Test
+    fun untestedMainProviderFollowsTheMainModel() {
+        val s = store()
+        assertNull("没有主模型", s.untestedMainProvider())
+        val p = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k", emptyList(), untested = true)
+        s.markTyped(p.id, "m1")
+        s.use(ModelRole.Main, p.id, "m1", none)
+        assertEquals(p.id, s.untestedMainProvider()?.id)
+        s.markVerified(p.id, "m1")
+        assertNull("试通过了", s.untestedMainProvider())
+        val listed = s.connect("Y", ProviderConfig.Kind.OpenAiCompat, "https://y.test/v1", "k", listOf(ListedModel("m2")))
+        s.use(ModelRole.Main, listed.id, "m2", none)
+        assertNull("从列表里选的不算", s.untestedMainProvider())
+    }
+
+    /** 跳过测试再存一次已经列过模型的那家:已有的列表留着,不要被空表盖掉,也仍然是「测过」。 */
+    @Test
+    fun savingUntestedAgainKeepsAnExistingModelList() {
+        val s = store()
+        val p = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k", listOf(ListedModel("m1")))
+        val again = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k2", emptyList(), untested = true)
+        assertEquals(p.id, again.id)
+        assertEquals(listOf("m1"), again.models!!.map { it.id })
+        assertFalse("已经列过列表的不算没测过", again.savedUntested)
+        assertEquals("k2", s.providerKey(p.id))
+    }
+
     @Test
     fun modelsOfOneProviderShareOneKey() {
         val s = store()
@@ -368,10 +474,10 @@ class ProviderStoreTest {
     }
 
     @Test
-    fun configsPublishedAsFlow() {
+    fun configsExposeCurrentList() {
         val s = store()
         s.saveAsMain(cfg("a"), "sk-a")
-        assertSame(s.list(), s.configs.value)
+        assertEquals(s.list(), s.configs.value)
         assertEquals(1, s.configs.value.size)
     }
 

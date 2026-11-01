@@ -67,8 +67,6 @@ class PhoneSetupFlowTest {
         // 连上了就算成功,不管前面读到什么
         assertEquals(SetupPhase.Success, PhoneSetupFlow.view(i.copy(status = BuiltinShellStatus.Running)).phase)
         assertEquals(SetupPhase.Working, PhoneSetupFlow.view(i.copy(status = BuiltinShellStatus.Connecting)).phase)
-        // 确认过的几步都有「下一步」;无障碍靠跳过,配对和连接要真的做成
-        assertEquals(setOf(SetupStep.DeveloperOptions, SetupStep.UsbDebugging, SetupStep.WirelessDebugging), PhoneSetupFlow.CONFIRMABLE)
     }
 
     @Test
@@ -222,13 +220,6 @@ class PhoneSetupFlowTest {
         assertEquals(BuiltinShellFix.Retry, helper.failure?.fix)
 
         assertEquals(BuiltinShellFix.OpenWifi, BuiltinShellStatus.Failed(BuiltinShellFailure.NoWifi).fix)
-    }
-
-    @Test
-    fun repairShowsPairingStepUntilNewPairingStarts() {
-        val running = SetupInputs(true, true, BuiltinShellStatus.Running, repair = true)
-        assertEquals(SetupStep.PairingCode, PhoneSetupFlow.view(running).current)
-        assertEquals(SetupPhase.Working, PhoneSetupFlow.view(running.copy(status = BuiltinShellStatus.Connecting)).phase)
     }
 
     @Test

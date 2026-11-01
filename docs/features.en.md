@@ -8,7 +8,9 @@ Tell Mika what you want in one sentence, and it gets it done on your phone. This
 
 Any app installed on your phone works, with no per-app integration: Mika looks at the screen, finds buttons, taps and types like a person would. If it can see it, it can operate it.
 
-- Opens apps on a separate background screen and reads, taps, types and scrolls there while you keep using your phone. A small live view in the chat shows what it is doing.
+- Opens apps on a separate background screen and reads, taps, types and scrolls there while you keep using your phone. A small live view in the chat shows what it is doing; you can close it for the current task, leaving a small button at the bottom right that turns orange when Mika needs you.
+- When several tasks run at once, “Background screens” next to “Running” in the side menu lists which app each task is using and how far it got; open one to watch its live screen, tap to enlarge it and pinch to zoom.
+- When two tasks need the same app, the later one can wait until the other is done with it (up to a few minutes; it shows “Waiting for another task to finish with …”). Two tasks waiting on each other are caught at once instead of hanging.
 - Reads long lists and chat histories screen by screen, e.g. "summarize what my group chat talked about today".
 - Works even with apps whose UI cannot be read directly (custom-drawn UI, unlabeled controls): Mika reads on-screen text with the text recognition bundled in the APK, and with a vision-capable model it can also find buttons and input fields from screenshots.
 - Can share a piece of text straight into an app (to send a message or save a note); Mika still picks the recipient and taps send on that page itself.
@@ -36,6 +38,8 @@ Any app installed on your phone works, with no per-app integration: Mika looks a
 ## Interrupt or stop anytime
 
 - Keep talking while a task runs to add to or correct your request; Mika reads it before its next step.
+- Every step in the chat can be opened to see exactly what it tapped or typed and how that turned out.
+- “View process” works while the task is still running; new steps keep arriving as it goes.
 - Long-press a message sent during a task to withdraw or edit it before the model picks it up. Editing restores its quote too and is available when the composer has no draft; a message that carries a screen or text selected on a web page cannot be edited.
 - When you press stop, Mika adds a short wrap-up: what it did, what it saw, how many times it sent something, and what is left. Say "continue" next time and it knows where to pick up.
 
@@ -72,6 +76,8 @@ The apps and websites that already have usage knowledge are listed in the collap
 
 - Each conversation gets a workspace that can run Python, Node and shell commands, process files you send, and save results to your phone's Download/Mika folder.
 - Offline by default; when needed, turn on "Allow scripts to go online" (允许脚本联网) under "Files & computing environment" (文件与计算环境) in Settings. arm64 devices only; on other devices the app installs normally and the sandbox shows "not supported on this device".
+- When it is online you can give these commands a network proxy (it may include a user name and password, stored encrypted on the phone); Mika's own model calls don't use it.
+- The same page shows how much space the sandbox uses and lets you clear a conversation's workspace files; conversations with a running task are skipped.
 
 ## AI tools on your computer can use it (CLI / MCP)
 

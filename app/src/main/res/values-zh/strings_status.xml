@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="progress_replay">按以往的做法快速执行中(第 %1$d/%2$d 步)</string>
+    <string name="progress_waiting_app">等另一个任务用完%1$s</string>
     <plurals name="progress_batch">
         <item quantity="other">一次执行 %1$d 步</item>
     </plurals>
@@ -52,6 +53,8 @@
     <string name="turn_on_go">去开启</string>
     <string name="banner_a11y_not_running">无障碍服务没有运行</string>
     <string name="banner_a11y_not_running_detail">需要关掉再打开一次</string>
+    <string name="banner_a11y_locked">开机后还没解锁过手机，无障碍服务没在运行</string>
+    <string name="banner_a11y_locked_detail">解锁一次后会自己恢复，不用改设置</string>
     <string name="banner_no_model">还没有能用的模型</string>
     <string name="banner_no_model_detail">添加一个支持工具调用的模型</string>
     <string name="add">添加</string>

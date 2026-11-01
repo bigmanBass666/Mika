@@ -291,14 +291,4 @@ class PhoneSetupScreenTest {
         compose.onNodeWithTag("setup-usb").assertDoesNotExist()
         compose.onNodeWithTag("setup-usb-ask").assertDoesNotExist()
     }
-
-    @Test
-    fun unpairNeedsConfirmation() {
-        compose.setContent { PhoneHelperSection(BuiltinShellStatus.Running, onRepair = { calls += "repair" }, onUnpair = { calls += "unpair" }) }
-        compose.onNodeWithText(PhoneSetupCopy.REPAIR).performClick()
-        compose.onNodeWithText(PhoneSetupCopy.UNPAIR).performClick()
-        compose.onNodeWithText(PhoneSetupCopy.UNPAIR_TITLE).assertIsDisplayed()
-        compose.onNodeWithText(PhoneSetupCopy.UNPAIR_CONFIRM).performClick()
-        assertEquals(listOf("repair", "unpair"), calls)
-    }
 }

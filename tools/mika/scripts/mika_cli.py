@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -23,7 +24,8 @@ CONNECT_SCRIPT = PHONE_FILES + "/connect-computer.sh"
 MAX_RESPONSE = 4 * 1024 * 1024
 HANDOFF = {"waiting_for_answer", "waiting_on_phone"}
 TERMINAL = {"done", "failed", "cancelled"}
-STATUSES = TERMINAL | HANDOFF | {"starting", "running", "paused"}
+STATUSES = TERMINAL | HANDOFF | {"starting", "queued", "running", "paused"}
+RETRY_HINT = "Unlock the phone, open Mika once, then retry connect."
 
 
 class CliError(Exception):
@@ -129,22 +131,60 @@ class Client:
         return info
 
 
+def adb_unavailable():
+    return CliError("adb_unavailable", "adb was not found or cannot be run. Install Android platform-tools or provide a runnable --adb path.")
+
+
+def device_state_error(state):
+    if state == "unauthorized":
+        message = "The phone has not authorized this computer. Unlock the phone, accept the USB debugging prompt, then retry."
+    elif state == "offline":
+        message = "The phone is offline. Reconnect the cable or re-enable USB debugging on the phone, then retry."
+    else:
+        message = "The selected phone is not online; the CLI will not switch devices."
+    return CliError("device_offline", message, state=state)
+
+
 class Adb:
+    # adb executables whose server this process has already started; one start per process is enough.
+    _started = set()
+    _start_lock = threading.Lock()
+
     def __init__(self, executable="adb", device=None):
         self.executable, self.device = executable, device
 
     def run(self, *args, timeout=20):
         prefix = [self.executable] + (["-s", self.device] if self.device else [])
         try:
-            result = subprocess.run(prefix + list(args), capture_output=True, text=True, encoding="utf-8", timeout=timeout)
-        except FileNotFoundError:
-            raise CliError("adb_unavailable", "adb was not found. Install Android platform-tools or provide --adb.") from None
-        except (OSError, subprocess.TimeoutExpired, UnicodeError):
+            result = subprocess.run(prefix + list(args), stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", timeout=timeout)
+        except OSError:
+            raise adb_unavailable() from None
+        except (subprocess.TimeoutExpired, UnicodeError):
             raise CliError("adb", "ADB did not complete; check the selected phone's connection.") from None
         if result.returncode:
             # The official bootstrap script may print a token, including on failure.
             raise CliError("adb", "ADB could not complete the operation. Check the selected device; open Mika and run mika connect.")
         return result.stdout.strip()
+
+    def start_server(self):
+        # Once per process and executable. Output is discarded so a daemon started here never holds the pipes
+        # of a later captured call.
+        with Adb._start_lock:
+            if self.executable in Adb._started:
+                return
+            self._start_server()
+            Adb._started.add(self.executable)
+
+    def _start_server(self):
+        try:
+            result = subprocess.run([self.executable, "start-server"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, timeout=60)
+        except OSError:
+            raise adb_unavailable() from None
+        except subprocess.TimeoutExpired:
+            raise CliError("adb", "ADB server did not start within 60 seconds; close other ADB tools and retry.") from None
+        if result.returncode:
+            raise CliError("adb", "ADB server could not start; check the Android platform-tools install and retry.")
 
     def devices(self):
         devices = []
@@ -156,13 +196,27 @@ class Adb:
         return devices
 
     def select(self):
+        devices = self.devices()
         if not self.device:
-            online = [d["device"] for d in self.devices() if d["state"] == "device"]
-            if len(online) != 1:
-                raise CliError("device_selection", "Expected one online phone. Run mika devices and choose --device SERIAL.")
-            self.device = online[0]
-        if self.run("get-state") != "device":
-            raise CliError("device_offline", "The selected phone is not online; the CLI will not switch devices.")
+            online = [d["device"] for d in devices if d["state"] == "device"]
+            if len(online) == 1:
+                self.device = online[0]
+            elif len(devices) == 1:
+                # The only phone is not ready; report its state rather than a selection problem.
+                self.device = devices[0]["device"]
+            else:
+                raise CliError("device_selection", "Expected one online phone. Run mika devices and choose --device SERIAL.", devices=devices)
+        listed = next((d["state"] for d in devices if d["device"] == self.device), None)
+        if listed not in {None, "device"}:
+            raise device_state_error(listed)
+        try:
+            state = self.run("get-state")
+        except CliError as exc:
+            if exc.code != "adb":
+                raise
+            state = None
+        if state != "device":
+            raise device_state_error(state or listed or "unknown")
 
 
 def base_url(raw):
@@ -176,6 +230,12 @@ def base_url(raw):
     if not valid:
         raise CliError("arguments", "--url must be an HTTP(S) origin or /api/v1 URL, without credentials, query or fragment.")
     return urllib.parse.urlunsplit((url.scheme, url.netloc, API, "", ""))
+
+
+def progress(args, message):
+    # Progress is for a person watching; stdout stays machine-readable JSON.
+    if getattr(args, "progress", False):
+        print("mika: " + message, file=sys.stderr, flush=True)
 
 
 @contextlib.contextmanager
@@ -194,15 +254,27 @@ def connection(args, secrets):
     if args.token_file:
         raise CliError("arguments", "--token-file requires --url; ADB reads the current token from the phone.")
     adb = Adb(args.adb, args.device or os.environ.get("ANDROID_SERIAL"))
+    progress(args, "starting ADB server...")
+    adb.start_server()
     adb.select()
     if args.command == "connect":
-        adb.run("shell", "sh", CONNECT_SCRIPT, timeout=60)
+        progress(args, "running phone bootstrap...")
+        try:
+            adb.run("shell", "sh", CONNECT_SCRIPT, timeout=60)
+        except CliError as exc:
+            if exc.code != "adb":
+                raise
+            raise CliError("adb", "Mika's phone bootstrap did not complete. " + RETRY_HINT) from None
     try:
         info = json.loads(adb.run("shell", "cat", INFO_FILE))
         if not isinstance(info, dict):
             raise ValueError()
     except ValueError:
-        raise CliError("connection_info", "Mika's connection information is invalid; run mika connect.") from None
+        raise CliError("connection_info", "Mika's connection information is invalid. " + RETRY_HINT) from None
+    except CliError as exc:
+        if exc.code != "adb":
+            raise
+        raise CliError("connection_info", "Mika's connection information could not be read. " + RETRY_HINT) from None
     token = clean_token(info.get("token"))
     secrets.append(token)
     boot = adb.run("shell", "settings", "get", "global", "boot_count")
@@ -221,7 +293,7 @@ def connection(args, secrets):
     finally:
         # Never remove all forwards or a mapping created by another invocation.
         try:
-            adb.run("forward", "--remove", "tcp:" + local)
+            adb.run("forward", "--remove", "tcp:" + local, timeout=5)
         except CliError:
             print("mika: could not confirm removal of the temporary ADB forward on port " + local + ".", file=sys.stderr)
 
@@ -271,8 +343,12 @@ def execute(args, secrets):
     if args.command == "devices":
         if args.url or args.token_file:
             raise CliError("arguments", "devices lists ADB devices; it does not use --url or --token-file.")
-        return {"devices": Adb(args.adb).devices()}
+        adb = Adb(args.adb)
+        progress(args, "starting ADB server...")
+        adb.start_server()
+        return {"devices": adb.devices()}
     with connection(args, secrets) as (client, transport):
+        progress(args, "contacting the phone...")
         info = client.discover()
         if args.command == "connect":
             return {"connected": True, **transport, "api_version": info["api_version"], "server_version": info.get("server_version")}
@@ -372,6 +448,10 @@ def parser():
 
 
 def main(argv=None):
+    # Pipes default to the locale code page on Windows; agents read stdout as UTF-8 and stdin is documented as UTF-8.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     argv = list(sys.argv[1:] if argv is None else argv)
     secrets, code = [], 0
     compact = "--json" in argv
@@ -394,6 +474,7 @@ def main(argv=None):
                 sys.path.append(str(Path(__file__).resolve().parent))
                 from mika_desk import serve
             return serve(args)
+        args.progress = args.command in {"devices", "connect", "doctor"}
         result = execute(args, secrets)
         if isinstance(result.get("status"), str) and result["status"] in {"failed", "cancelled"}:
             code = 1

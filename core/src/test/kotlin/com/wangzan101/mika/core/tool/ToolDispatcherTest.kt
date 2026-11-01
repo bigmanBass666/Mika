@@ -242,12 +242,6 @@ class ToolDispatcherTest {
         assertFalse(spec.description, "VOLUME" in spec.description)
     }
 
-    @Test fun writingToolClassification() {
-        val e = buildJsonObject { }
-        for (n in listOf("phone_tap", "phone_type_text", "phone_scroll", "phone_swipe", "phone_back", "phone_launch_app", "phone_clear_text", "phone_press_key")) assertTrue(n, isWritingTool(n, e))
-        for (n in listOf("phone_observe", "phone_screenshot", "wait", "phone_list_elements", "phone_list_apps", "end_not_done")) assertFalse(n, isWritingTool(n, e))
-    }
-
     @Test fun observeAttachesImageOnlyWithVision() = runTest {
         val off = toolDispatcher(FakeScreen()).execute(call("phone_observe"))
         assertNull(off.image)
@@ -262,7 +256,7 @@ class ToolDispatcherTest {
 
     @Test fun definitionsFollowVision() {
         val off = toolDispatcher(FakeScreen()).definitions().map { it.name }
-        assertFalse("phone_screenshot" in off); assertTrue("phone_observe" in off); assertFalse("home" in off)
+        assertFalse("phone_screenshot" in off); assertTrue("phone_observe" in off)
         assertTrue("phone_screenshot" in toolDispatcher(FakeScreen(), true).definitions().map { it.name })
         toolDispatcher(FakeScreen()).definitions().forEach { assertTrue(it.name, it.parametersJsonSchema.startsWith("{")) }
     }

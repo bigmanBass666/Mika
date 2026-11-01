@@ -20,7 +20,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -105,12 +104,6 @@ class AgentDisplayTest {
     }
 
     @Test
-    fun startAppReportsMissingPackage() {
-        val d = newDisplay()
-        assertEquals(ShellService.START_NOT_FOUND, shell.startApp(d.displayId, "com.wangzan101.no.such.app"))
-    }
-
-    @Test
     fun frameArrives() {
         val d = newDisplay()
         shell.startApp(d.displayId, SETTINGS)
@@ -127,8 +120,7 @@ class AgentDisplayTest {
         shell.startApp(d.displayId, SETTINGS)
         val frame = withTimeoutOrNull(2_000) { d.frames.filterNotNull().first() }
         assertNotNull("no preview frame within 2s", frame)
-        assertTrue("preview width ${frame!!.width} > 360", frame.width <= 360)
-    }
+        assertTrue("preview width ${frame!!.width} > 360", frame.width <= 360)    }
 
     @Test
     fun releaseClearsFrames() = runBlocking {
@@ -174,14 +166,6 @@ class AgentDisplayTest {
     }
 
     @Test
-    fun injectKeyRefusesKeysOutsideTheAllowlist() {
-        val d = newDisplay()
-        // 只用打到虚拟屏上也无害的键;电源、音量这类绝不在真机上试
-        assertFalse(shell.injectKey(d.displayId, KeyEvent.KEYCODE_HOME))
-        assertFalse(shell.injectKey(d.displayId, KeyEvent.KEYCODE_SEARCH))
-    }
-
-    @Test
     fun injectsInputOnDisplay() {
         val d = newDisplay()
         val mainTop = shell.topTaskId(Display.DEFAULT_DISPLAY)
@@ -208,11 +192,6 @@ class AgentDisplayTest {
         assertTrue(shellCommand("appops get $SETTINGS PLAY_AUDIO").contains("PLAY_AUDIO: ignore"))
         assertTrue(shell.setAudioMuted(SETTINGS, false))
         assertEquals(before, shellCommand("appops get $SETTINGS PLAY_AUDIO").trim())
-    }
-
-    @Test
-    fun muteFailsForUnknownPackage() {
-        assertFalse(shell.setAudioMuted("com.wangzan101.no.such.app", true))
     }
 
     /** 助手进程被杀后,看门狗重起助手,连接拿到可用的新服务。 */

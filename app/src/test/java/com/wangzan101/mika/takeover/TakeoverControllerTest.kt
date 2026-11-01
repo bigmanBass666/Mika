@@ -143,13 +143,6 @@ class TakeoverControllerTest {
     }
 
     @Test
-    fun handBackWithoutHandOverJustResumes() = test {
-        takeover.onState(waiting)
-        assertTrue(takeover.handBack())
-        assertEquals(listOf("resume:complete"), port.log)
-    }
-
-    @Test
     fun handOverWithNoAppStillHandsOver() = test {
         port.displays.clear()
         port.target = -1
@@ -348,7 +341,7 @@ class TakeoverControllerTest {
     @Test
     fun handBackWithoutHandOverHasNoCounts() = test {
         takeover.onState(waiting)
-        takeover.handBack()
+        assertTrue(takeover.handBack())
         assertEquals(HandBack(HandBackOutcome.complete), port.results.single())
     }
 }

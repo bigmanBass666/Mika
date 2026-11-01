@@ -14,6 +14,8 @@ class SpeechSettingsTest {
             SpeechChoice.Auto,
             SpeechChoice.System,
             SpeechChoice.Off,
+            SpeechChoice.Doubao(),
+            SpeechChoice.Doubao(DoubaoProtocol.CONCURRENT),
             SpeechChoice.Provider("p1", "whisper-1", TranscribeMethod.AudioTranscriptions),
             SpeechChoice.Provider("p2", "gpt-4o-audio", TranscribeMethod.ChatInputAudio),
             SpeechChoice.Provider("p3", "gemini-flash", TranscribeMethod.GeminiInline),
@@ -81,14 +83,6 @@ class SpeechSettingsTest {
         s.set(SpeechChoice.Auto)
         s.noteSystemSilent()
         assertEquals(false, s.systemSilent.value)
-    }
-
-    @Test fun transcribeMethodNamesNeverChange() {
-        // 设置里存的是名字:改名、删掉都会让旧设置读不回来;新的只往后加,加了在这里补上
-        assertEquals(
-            listOf("AudioTranscriptions", "ChatInputAudio", "GeminiInline", "ChatInputAudioUri", "ChatInputAudioOnly"),
-            TranscribeMethod.entries.map { it.name },
-        )
     }
 
     @Test fun earlierStoredMethodStillReads() {

@@ -39,6 +39,8 @@ object StatusCopy {
     fun progress(p: RunProgress): String = when (p) {
         is RunProgress.Replay -> tr(R.string.progress_replay, p.step, p.total)
         is RunProgress.Batch -> trPlural(R.plurals.progress_batch, p.steps)
+        // 只是在等另一个任务,不要用户做什么
+        is RunProgress.WaitingForApp -> tr(R.string.progress_waiting_app, p.app)
     }
 
     /** 付款接管的商品、金额、地址,一行一项;都没有时为 null。卡片和通知共用。 */
@@ -137,7 +139,10 @@ object StatusCopy {
         }
         is Problem.Accessibility -> when (p.state) {
             AccessibilityState.Off -> BannerCopy(tr(R.string.banner_a11y_off), tr(R.string.banner_a11y_off_detail), tr(R.string.turn_on_go))
-            AccessibilityState.EnabledNotRunning -> BannerCopy(tr(R.string.banner_a11y_not_running), tr(R.string.banner_a11y_not_running_detail), tr(R.string.fix_it))
+            // 开机后还没解锁过时服务本来就绑不上:解锁后会自己恢复,不让用户去关掉再打开
+            AccessibilityState.EnabledNotRunning ->
+                if (p.userLocked) BannerCopy(tr(R.string.banner_a11y_locked), tr(R.string.banner_a11y_locked_detail), tr(R.string.view))
+                else BannerCopy(tr(R.string.banner_a11y_not_running), tr(R.string.banner_a11y_not_running_detail), tr(R.string.fix_it))
             AccessibilityState.On -> error("not a problem")
         }
         Problem.NoModel -> BannerCopy(tr(R.string.banner_no_model), tr(R.string.banner_no_model_detail), tr(R.string.add))

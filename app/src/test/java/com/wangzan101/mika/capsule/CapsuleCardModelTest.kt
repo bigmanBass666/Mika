@@ -3,6 +3,7 @@ package com.wangzan101.mika.capsule
 import org.junit.Rule
 import com.wangzan101.mika.i18n.ChineseTexts
 import com.wangzan101.mika.cap.web.KeptPage
+import com.wangzan101.mika.confirm.ConfirmationNotifier
 import com.wangzan101.mika.core.agent.FailKind
 import com.wangzan101.mika.core.agent.GateReason
 import com.wangzan101.mika.core.agent.TaskState
@@ -137,7 +138,7 @@ class CapsuleCardModelTest {
         assertEquals(CardContent.Confirm("要你同意:下单", "在 购物\n金额:¥19.9", 42), CapsuleCards.content(card("a", s, CapsuleKind.NeedConfirm, exchange = ex)))
         // 还没有这一问一答时也能同意:编号和对话页、通知用的同一个
         val raw = CapsuleCards.content(card("a", s, CapsuleKind.NeedConfirm)) as CardContent.Confirm
-        assertEquals(System.identityHashCode(s), raw.key)
+        assertEquals(ConfirmationNotifier.requestKey(s), raw.key)
         assertTrue(raw.body.contains("金额:¥19.9"))
     }
 

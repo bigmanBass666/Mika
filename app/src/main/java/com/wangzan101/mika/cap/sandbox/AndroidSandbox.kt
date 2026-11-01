@@ -9,6 +9,7 @@ import com.wangzan101.mika.core.workspace.GatedFile
 import com.wangzan101.mika.core.workspace.WorkspaceFileGate
 import com.wangzan101.mika.core.workspace.SandboxError
 import com.wangzan101.mika.core.workspace.SandboxPaths
+import com.wangzan101.mika.settings.ContainerProxyStore
 import com.wangzan101.mika.core.cap.sandbox.SandboxPort
 import com.wangzan101.mika.core.cap.sandbox.PhoneCommandHandler
 import com.wangzan101.mika.core.cap.sandbox.SandboxStatus
@@ -107,6 +108,8 @@ class AndroidSandbox internal constructor(
     private val startPreparing: () -> Job? = { null },
     /** 用户的联网设置;不给时按就绪状态里的。 */
     private val allowNetwork: (() -> Boolean)? = null,
+    /** 容器的网络代理(见 [ContainerProxyStore]);空串不用。只在允许联网的命令里给。 */
+    private val proxy: () -> String = { "" },
     /** APK 内的桥客户端；已有运行环境也要随 APK 更新。 */
     private val clientScript: () -> ByteArray? = { null },
 ) : SandboxPort {
@@ -118,6 +121,7 @@ class AndroidSandbox internal constructor(
         skillFiles = { SkillsSync.bundled },
         startPreparing = { RuntimePreparer.ensure(context, retryFailed = true) },
         allowNetwork = { state.networkAllowed },
+        proxy = { ContainerProxyStore.get(context).get() },
         clientScript = { context.assets.open("sandbox/mika").use { it.readBytes() } },
     )
 
@@ -168,7 +172,7 @@ class AndroidSandbox internal constructor(
             // 命令结束(含超时、被杀、取消)就关掉桥:旧的名字和令牌不再能用
             val session = if (bridges) bridgeFor(workspace, network, onProgress, phone).open() else null
             try {
-                launch(cmd, ProcRunner.env(dirs, session?.name, session?.token, workspace), timeoutSec * 1000L + FALLBACK_GRACE_MS)
+                launch(cmd, ProcRunner.env(dirs, session?.name, session?.token, workspace, if (network) proxy() else ""), timeoutSec * 1000L + FALLBACK_GRACE_MS)
             } finally {
                 session?.close()
             }

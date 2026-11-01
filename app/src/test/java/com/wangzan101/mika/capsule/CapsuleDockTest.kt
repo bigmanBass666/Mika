@@ -54,8 +54,10 @@ class CapsuleDockTest {
         assertEquals(DockSide.Left, CapsuleDocking.release(380, 500, 200, 100, area).side)
         assertEquals(20, CapsuleDocking.dockedX(DockSide.Left, area, 200))
         assertEquals(780, CapsuleDocking.dockedX(DockSide.Right, area, 200))
-        assertEquals(20, CapsuleDocking.edgeOffset(DockSide.Right, area))
-        assertEquals(20, CapsuleDocking.edgeOffset(DockSide.Left, area))
+        // 刘海在左边时两侧让开的宽度不同:左边 100,右边 20
+        val lopsided = DockArea.of(OverlayArea(2000, 1000, insetLeft = 80, insetTop = 40), margin = 30, gap = 20, room = 10)
+        assertEquals(100, CapsuleDocking.edgeOffset(DockSide.Left, lopsided))
+        assertEquals(20, CapsuleDocking.edgeOffset(DockSide.Right, lopsided))
     }
 
     @Test fun keyboardPushesTheRangeUp() {

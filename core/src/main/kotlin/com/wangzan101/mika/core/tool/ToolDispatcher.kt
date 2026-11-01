@@ -280,6 +280,8 @@ class ToolDispatcher internal constructor(
             try {
                 if (!tool.yieldsToSteer) tool.execute(args, ctx)
                 else waitOrSteer { tool.execute(args, ctx) } ?: failCode(SKIPPED_FOR_NEW_MESSAGE)
+            } catch (e: com.wangzan101.mika.core.access.AppAccessDenied) {
+                throw e
             } catch (e: ArgError) {
                 invalid(e)
             } catch (e: CancellationException) {

@@ -60,6 +60,8 @@ import com.wangzan101.mika.cap.phone.setup.PairingNotifier
 import com.wangzan101.mika.core.shell.BuiltinShellStatus
 import com.wangzan101.mika.ui.theme.MikaTheme
 import com.wangzan101.mika.ui.theme.animationsOff
+import com.wangzan101.mika.ui.theme.appearanceDark
+import com.wangzan101.mika.ui.theme.systemBarsFor
 
 class MainActivity : ComponentActivity() {
     private lateinit var monitor: SystemStatusMonitor
@@ -83,7 +85,10 @@ class MainActivity : ComponentActivity() {
         monitor = SystemStatusMonitor(this, PhoneServices.of(this).shellControl)
         val store = ProviderStore.get(this)
         setContent {
-            MikaTheme(reduceMotion = animationsOff(this)) {
+            // 外观按设置来,改了当场换;系统栏图标的深浅跟着界面
+            val dark = appearanceDark()
+            LaunchedEffect(dark) { systemBarsFor(dark) }
+            MikaTheme(dark = dark, reduceMotion = animationsOff(this)) {
                 // 在输入框外面点一下或拖动就收起键盘,全 App 统一
                 KeyboardDismissArea(Modifier.fillMaxSize()) {
                     MikaRoot(store, monitor, ::perform, requestedConversation) { requestedConversation = null }
@@ -304,6 +309,7 @@ private fun MikaRoot(store: ProviderStore, monitor: SystemStatusMonitor, activit
                 onMemory = { nav.pushFromDrawer(Route.Memory) },
                 onSettings = { nav.pushFromDrawer(Route.Settings) },
                 onBrowser = { nav.pushFromDrawer(Route.Browser) },
+                onScreens = { nav.pushFromDrawer(Route.Screens) },
                 onAbout = { nav.pushFromDrawer(Route.About) },
                 updateAvailable = AboutCopy.drawerDot(updateState),
                 reopen = nav.reopenDrawer,
@@ -395,7 +401,10 @@ private fun MikaRoot(store: ProviderStore, monitor: SystemStatusMonitor, activit
         }
         Route.Run -> {
             val id = runId
-            val vm = remember(id) { id?.let { RunTimelineViewModel(RunStore(context), it, resolveMemory = app.chat::usedMemoryTexts) } }
+            val vm = remember(id) { id?.let { RunTimelineViewModel(
+                    RunStore(context), it, resolveMemory = app.chat::usedMemoryTexts,
+                    alive = { run -> app.taskState.runs.value.any { r -> r.runId.value == run } },
+                ) } }
             if (vm != null) RunTimelineScreen(vm, back) else LaunchedEffect(Unit) { nav.back() }
         }
         Route.Source -> {
@@ -405,6 +414,10 @@ private fun MikaRoot(store: ProviderStore, monitor: SystemStatusMonitor, activit
             SourceScreen(vm, back)
         }
         Route.Plans -> PlansScreen(context, onBack = back, onOpenConversation = {
+            app.chat.openConversation(it)
+            nav.reset()
+        })
+        Route.Screens -> ScreensScreen(app.taskState, onBack = back, onOpenConversation = {
             app.chat.openConversation(it)
             nav.reset()
         })

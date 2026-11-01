@@ -122,6 +122,9 @@ data class ProviderConfig(
  * [verifiedModels] 是在这家试调用(见 [ProviderStore.probe])得到过回复的模型名:不提供列表的服务商,模型名是手填的,
  * 没在这里的就没核实过(旧版本存下的都没有,那时不提供列表的服务商不试调用)。
  * [typedModels] 是用户手填、试调用通过后加进来的模型名(列表里没有、或这家列不出模型):刷新列表不丢,选模型时标「手填」。
+ * [savedUntested] 是用户跳过测试直接存下的一家(见 [ProviderStore.connect]):既没列过模型、也没试调用过,
+ * 所以 [models] 是空列表、[verifiedModels] 是空的,但那些「这家不提供列表」的说法对它不成立。
+ * 之后成功列过一次模型或试通过一次就清掉(见 [ProviderStore.rememberModels]、[ProviderStore.markVerified])。
  */
 data class Provider(
     val id: String,
@@ -137,10 +140,20 @@ data class Provider(
      * 标了的服务商详情里是账号登录的样子(退出登录、到对方页面删 Key),不是「更换 Key」。
      */
     val signIn: String? = null,
+    val savedUntested: Boolean = false,
     /** 按模型名保留，用途切换后也能找回。 */
     val contextSettings: Map<String, ModelContextSettings> = emptyMap(),
+    /** 用户说的某个模型能不能看图(按模型名):比列表和预设初值都算数,见 [ModelOptions.seesImages]。 */
+    val visionOverrides: Map<String, Boolean> = emptyMap(),
 ) {
     val key: String get() = ProviderConnection.keyOf(kind, baseUrl, name)
+
+    /**
+     * [model] 在这家还没测试通过:这家没有可用的列表(不提供,或跳过测试存下时没列过),模型名是手填的,又没在
+     * [verifiedModels] 里。账号登录的那几家模型名是固定的,不算。服务商页对这样在用的模型给「重新测试」。
+     */
+    fun untested(model: String): Boolean =
+        kind != ProviderConfig.Kind.ChatGpt && kind != ProviderConfig.Kind.Xai && models?.isEmpty() == true && model !in verifiedModels
 }
 
 /** 留空的窗口沿用所选模型配置，留空的触发点交给核心自动计算。 */
@@ -341,6 +354,8 @@ class ProviderStore(
      * [typed] 是其中用户手填的,记进 [Provider.typedModels]。
      * [signIn] 是 Key 的来历(见 [Provider.signIn]):用户自己填 Key 的为 null,授权来的为那一家的标记。
      * 两种来历各是各的服务商(地址、名字一样也不合并):授权不会顶掉用户自己填的 Key,退出登录也只删授权来的那把。
+     * [untested] 为真是用户跳过测试直接存下的(见 [Provider.savedUntested]):一个模型都没列、也没试调用。
+     * 已经有这一家、而且它列过模型或核实过时,不会因为这个参数被重新标成没测过。
      */
     @Synchronized
     fun connect(
@@ -349,11 +364,16 @@ class ProviderStore(
         verified: Set<String> = emptySet(),
         signIn: String? = null,
         typed: Set<String> = emptySet(),
+        untested: Boolean = false,
     ): Provider {
         val found = findOrAddProvider(name, kind, baseUrl, signIn)
+        // 跳过测试时没有列表可存:这家之前列过的留着,不要用空表把已有的列表盖掉
+        val listed = if (untested && models.isEmpty()) found.models ?: models else models
         val p = found.copy(
-            models = models, sessionHeader = sessionHeader,
+            models = listed, sessionHeader = sessionHeader,
             verifiedModels = found.verifiedModels + verified, typedModels = found.typedModels + typed,
+            // 这次没测、这家也没有核实过的模型、也没列过列表,才是「没测过」;别的情况一律按测过
+            savedUntested = untested && verified.isEmpty() && found.verifiedModels.isEmpty() && listed.isEmpty(),
         )
         _providers.value = _providers.value.map { if (it.id == p.id) p else it }
         if (apiKey != null) setKey(p.id, apiKey)
@@ -361,20 +381,28 @@ class ProviderStore(
         return p
     }
 
-    /** 记下服务商最近一次列出的模型。 */
+    /** 记下服务商最近一次列出的模型。列出来了,就说明「没测过」不再成立(跳过测试存下的那家在这里清掉标记)。 */
     @Synchronized
     fun rememberModels(providerId: String, models: List<ListedModel>) {
         if (provider(providerId) == null) return
-        _providers.value = _providers.value.map { if (it.id == providerId) it.copy(models = models) else it }
+        _providers.value = _providers.value.map {
+            if (it.id == providerId) it.copy(models = models, savedUntested = false) else it
+        }
         writeConfig()
     }
 
-    /** 记下 [model] 在这家试调用得到了回复(见 [Provider.verifiedModels])。 */
+    /**
+     * 记下 [model] 在这家试调用得到了回复(见 [Provider.verifiedModels])。
+     * 试通过了就说明「没测过」不再成立,跳过测试存下的那家在这里清掉标记——这个模型本来就在
+     * [Provider.verifiedModels] 里时也要清,不能直接返回。
+     */
     @Synchronized
     fun markVerified(providerId: String, model: String) {
         val p = provider(providerId) ?: return
-        if (model in p.verifiedModels) return
-        _providers.value = _providers.value.map { if (it.id == providerId) it.copy(verifiedModels = it.verifiedModels + model) else it }
+        if (model in p.verifiedModels && !p.savedUntested) return
+        _providers.value = _providers.value.map {
+            if (it.id == providerId) it.copy(verifiedModels = it.verifiedModels + model, savedUntested = false) else it
+        }
         writeConfig()
     }
 
@@ -424,8 +452,8 @@ class ProviderStore(
     }
 
     /**
-     * 定一个用途:用户选什么就是什么,不看能力标记。选具体模型时,主模型把工具调用、看图模型把看图标记记为 true
-     * (运行时按这两个标记决定发不发工具定义、附不附图)。之后没人用的配置删掉。
+     * 定一个用途:用户选什么就是什么,不看能力标记。选具体模型当主模型时把工具调用标记记为 true(运行时据此发工具定义);
+     * 看图标记不改存着的,在 [configFor] 里按当下的选择推出来,换走了就跟着回去。之后没人用的配置删掉。
      * 配置不存在、或这个用途不接受这种选择(见 [RoleChoices.with])时返回 false。
      */
     @Synchronized
@@ -435,11 +463,8 @@ class ProviderStore(
         if (choice is RoleChoice.Model) {
             _configs.value = _configs.value.map { c ->
                 if (c.id != choice.configId) c
-                else when (role) {
-                    ModelRole.Main -> c.copy(capabilities = c.capabilities.copy(toolCalls = true))
-                    ModelRole.Vision -> c.copy(capabilities = c.capabilities.copy(vision = true))
-                    ModelRole.Light -> c
-                }
+                else if (role == ModelRole.Main) c.copy(capabilities = c.capabilities.copy(toolCalls = true))
+                else c
             }
         }
         _roles.value = next
@@ -479,6 +504,15 @@ class ProviderStore(
         return true
     }
 
+    /** 记下用户说的 [model] 能不能看图(见 [Provider.visionOverrides]);服务商不存在时返回 false。 */
+    @Synchronized
+    fun setModelVision(providerId: String, model: String, sees: Boolean): Boolean {
+        val p = provider(providerId) ?: return false
+        _providers.value = _providers.value.map { if (it.id == p.id) p.copy(visionOverrides = p.visionOverrides + (model to sees)) else it }
+        writeConfig()
+        return true
+    }
+
     /** 看图模型的「看图定位已验证」(开发者选项里改);看图用主模型时改的是主模型那条配置。没有看图模型时不动。 */
     @Synchronized
     fun setVisionGroundingVerified(verified: Boolean) {
@@ -490,14 +524,22 @@ class ProviderStore(
     }
 
     /**
-     * 这个用途实际用的配置;没选、不用时为 null。看图「用主模型」时是主模型那条配置、看图标记为 true:
-     * 用户说了主模型能看图,截图就照发。这只影响看图这一路,主模型自己办事时仍按它存着的标记。
+     * 这个用途实际用的配置;没选、不用时为 null。看图标记按当下推出来,不看存着的列表数据有没有写:
+     * 看图这一路总是 true(用户选了它来看图);别的用途按 [ModelOptions.seesImages]——用户在这个模型上说过的为准,
+     * 没说过而看图也用这条配置(选了同一个模型,或「用主模型」)的,同样算能看,截图直接附给它,不必另调一次看图。
      */
     fun configFor(role: ModelRole): ProviderConfig? {
         val choices = _roles.value
         val cfg = choices.resolve(role)?.let { id -> _configs.value.firstOrNull { it.id == id } } ?: return null
-        val viaMain = role == ModelRole.Vision && choices.vision == RoleChoice.SameAsMain
-        return if (viaMain) cfg.copy(capabilities = cfg.capabilities.copy(vision = true)) else cfg
+        val sees = role == ModelRole.Vision || ModelOptions.seesImages(cfg.capabilities.vision,
+            provider(cfg.providerId)?.visionOverrides?.get(cfg.model), usedForVision = choices.resolve(ModelRole.Vision) == cfg.id)
+        return if (sees == cfg.capabilities.vision) cfg else cfg.copy(capabilities = cfg.capabilities.copy(vision = sees))
+    }
+
+    /** 主模型在它那家还没测试通过时给出那一家(见 [Provider.untested]);任务因模型失败时据此提示去「重新测试」。 */
+    fun untestedMainProvider(): Provider? {
+        val cfg = configFor(ModelRole.Main) ?: return null
+        return provider(cfg.providerId)?.takeIf { it.untested(cfg.model) }
     }
 
     /**
@@ -858,7 +900,12 @@ class ProviderStore(
             val settings = ModelContextSettings(entry.positiveInt("windowTokens"), entry.positiveInt("triggerTokens"))
             if (settings == ModelContextSettings()) null else model to settings
         }.toMap(),
+        visionOverrides = (o["visionOverrides"] as? JsonObject).orEmpty().mapNotNull { (model, raw) ->
+            (raw as? JsonPrimitive)?.booleanOrNull?.let { model to it }
+        }.toMap(),
         typedModels = o["typedModels"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet().orEmpty(),
+        // 旧版本存下的没有这一项:那时每一家都走过「测试并保存」,按测过算
+        savedUntested = o["untested"]?.jsonPrimitive?.booleanOrNull ?: false,
         models = o["models"]?.jsonArray?.map { e ->
             val m = e.jsonObject
             ListedModel(
@@ -931,12 +978,16 @@ class ProviderStore(
                         put("id", p.id); put("name", p.name); put("kind", p.kind.name); put("baseUrl", p.baseUrl)
                         p.sessionHeader?.let { put("sessionHeader", it) }
                         p.signIn?.let { put("signIn", it) }
+                        if (p.savedUntested) put("untested", true)
                         if (p.verifiedModels.isNotEmpty()) putJsonArray("verifiedModels") { p.verifiedModels.forEach { add(it) } }
                         if (p.contextSettings.isNotEmpty()) putJsonObject("contextSettings") {
                             for ((model, settings) in p.contextSettings) putJsonObject(model) {
                                 settings.windowTokens?.let { put("windowTokens", it) }
                                 settings.triggerTokens?.let { put("triggerTokens", it) }
                             }
+                        }
+                        if (p.visionOverrides.isNotEmpty()) putJsonObject("visionOverrides") {
+                            for ((model, sees) in p.visionOverrides) put(model, sees)
                         }
                         if (p.typedModels.isNotEmpty()) putJsonArray("typedModels") { p.typedModels.forEach { add(it) } }
                         p.models?.let { models ->

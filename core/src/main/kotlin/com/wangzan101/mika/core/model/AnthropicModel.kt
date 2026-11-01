@@ -14,10 +14,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -110,7 +108,7 @@ class AnthropicModel(
         return thinkingType != "disabled" && opaque !in staleThinking && SignedThinking.block(p, endpoint) != null
     }
 
-    private fun request(system: String, messages: List<Message>, tools: List<ToolSpec>, stream: Boolean): Request {
+    private suspend fun request(system: String, messages: List<Message>, tools: List<ToolSpec>, stream: Boolean): Request {
         val systemText = (listOf(system) + messages.filter { it.role == Role.System }
             .map { m -> m.parts.filterIsInstance<Part.Text>().joinToString("\n") { it.text } })
             .filter { it.isNotEmpty() }.joinToString("\n\n")
@@ -143,7 +141,7 @@ class AnthropicModel(
             .withHeaders(headers)
             .header("x-api-key", apiKey)
             .header("anthropic-version", "2023-06-01")
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .postInference(InferenceProtocol.Anthropic, payload)
             .build()
     }
 

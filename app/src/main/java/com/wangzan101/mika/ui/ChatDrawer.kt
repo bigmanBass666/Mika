@@ -193,7 +193,7 @@ fun readiness(check: Prerequisites.Check): Pair<String, Boolean> = when {
 private const val MAX_RECENT = 50
 
 /**
- * 侧栏:从左边滑出、右边圆角。顶部是标志和状态;四个入口;中间是进行中和最近的对话;最底下设置和关于并排。
+ * 侧栏:从左边滑出、右边圆角。顶部是标志和状态;四个入口;中间是进行中(段标题右边进「后台屏」页)和最近的对话;最底下设置和关于并排。
  * 打开和关上由外面的抽屉管,这里只摆内容,点了什么交给回调。
  */
 @Composable
@@ -205,6 +205,7 @@ fun ChatDrawer(
     onPlans: () -> Unit,
     onMemory: () -> Unit,
     onBrowser: () -> Unit,
+    onScreens: () -> Unit = {},
     onSettings: () -> Unit,
     onOpen: (DrawerConversation) -> Unit,
     onAbout: () -> Unit = {},
@@ -252,7 +253,8 @@ fun ChatDrawer(
         LaunchedEffect(first) { list.scrollToItem(0) }
         LazyColumn(Modifier.fillMaxWidth().weight(1f).lazyListScrollbar(list), state = list) {
             if (sections.running.isNotEmpty()) {
-                item("h-running") { SectionLabel(stringResource(R.string.drawer_running)) }
+                // 「进行中」这一段的右边进「后台屏」页:看每个在跑的任务正在用哪个 App、实时画面
+                item("h-running") { RunningLabel(onScreens) }
                 items(sections.running, key = { "r-${it.id}" }) { ConversationEntry(it, onOpen, onActions) }
             }
             // 换不了对话时的说明放在第一段存着的对话(置顶或最近)上面
@@ -308,6 +310,25 @@ private fun NavEntry(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(text, style = MikaType.Body, color = c.ink, maxLines = 1, softWrap = false)
             if (dot) UpdateDot()
+        }
+    }
+}
+
+/** 「进行中」的段标题,右边一个「后台屏 ›」进后台屏页(只有有任务在跑时才有这一段)。 */
+@Composable
+private fun RunningLabel(onScreens: () -> Unit) {
+    val c = MikaTheme.colors
+    Row(Modifier.fillMaxWidth().padding(end = 12.dp), verticalAlignment = Alignment.Bottom) {
+        Box(Modifier.weight(1f)) { SectionLabel(stringResource(R.string.drawer_running)) }
+        Row(
+            Modifier.clip(NavShape).clickable(role = Role.Button, onClick = onScreens)
+                .padding(start = 10.dp, end = 6.dp, top = 8.dp, bottom = 4.dp).testTag("drawer-screens"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(MikaIcons.Screens, null, Modifier.size(14.dp), tint = c.ink3)
+            Text(stringResource(R.string.drawer_screens), style = MikaType.Hint, color = c.ink2)
+            Icon(MikaIcons.Chevron, null, Modifier.size(10.dp), tint = c.ink3)
         }
     }
 }
@@ -461,6 +482,7 @@ fun ChatWithDrawer(
     onPlans: () -> Unit,
     onMemory: () -> Unit,
     onBrowser: () -> Unit,
+    onScreens: () -> Unit = {},
     onSettings: () -> Unit,
     onAbout: () -> Unit = {},
     /** 有新版本:侧栏「关于 Mika」带小红点。 */
@@ -558,6 +580,7 @@ fun ChatWithDrawer(
                     onMemory = { leave(onMemory) },
                     onSettings = { leave(onSettings) },
                     onBrowser = { leave(onBrowser) },
+                    onScreens = { leave(onScreens) },
                     onAbout = { leave(onAbout) },
                     aboutDot = updateAvailable,
                     onActions = { item, bounds -> if (item.id != null) acting = item to bounds },

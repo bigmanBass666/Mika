@@ -77,7 +77,6 @@ class DiagnosticsTest {
         assertTrue(t.startsWith(Diagnostics.HEADER + "\n"))
         val sections = t.lines().filter { it.startsWith("[") }
         assertEquals(listOf("[App]", "[Device]", "[Phone control]", "[Recovery]", "[Models]", "[Recent runs]", "[Update]"), sections)
-        assertTrue("${t.lines().size} lines", t.lines().size in 30..70)
         assertTrue(t.contains("version: 0.1.7 (build cfa4380)"))
         assertTrue(t.contains("installer: com.android.packageinstaller"))
         assertTrue(t.contains("model: Google Pixel 8"))

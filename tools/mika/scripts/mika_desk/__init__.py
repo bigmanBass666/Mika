@@ -11,7 +11,7 @@ import sys
 import threading
 import webbrowser
 
-from mika_cli import Adb, CliError, connection, execute, recent_tasks, redact
+from mika_cli import Adb, CliError, connection, device_state_error, execute, recent_tasks, redact
 
 
 ASSETS = {
@@ -30,7 +30,12 @@ def command(data):
     if not isinstance(data, dict) or not all(isinstance(value, str) for value in data.values()):
         raise ValueError
     action = data.get("action")
-    if action not in FIELDS or data.keys() != FIELDS[action] | {"action"}:
+    if action not in FIELDS:
+        raise ValueError
+    expected = FIELDS[action] | {"action"}
+    if action == "run" and "conversation" in data:
+        expected.add("conversation")
+    if data.keys() != expected:
         raise ValueError
     if "task_id" in data and not re.fullmatch(r"[A-Za-z0-9_-]+", data["task_id"]):
         raise ValueError
@@ -50,6 +55,12 @@ class Desk(ThreadingHTTPServer):
         self.host = f"127.0.0.1:{self.server_port}"
         self.origin = "http://" + self.host
 
+    def list_devices(self):
+        # Caller holds the lock. Adb starts the server at most once per process.
+        adb = Adb(self.args.adb)
+        adb.start_server()
+        return adb.devices()
+
     def pin_target(self, choice):
         # A session owns one target even across disconnects and concurrent tabs.
         with self.lock:
@@ -57,9 +68,13 @@ class Desk(ThreadingHTTPServer):
                 if choice is not None and choice != self.args.device:
                     raise CliError("device_pinned", "The desk already has a target.", http_status=409)
                 return
-            online = [d["device"] for d in Adb(self.args.adb).devices() if d["state"] == "device"]
+            devices = self.list_devices()
+            online = [d["device"] for d in devices if d["state"] == "device"]
             if choice is None and len(online) == 1:
                 choice = online[0]
+            elif choice is None and len(devices) == 1:
+                # The only phone is not ready; name its state as the CLI does.
+                raise device_state_error(devices[0]["state"])
             if choice not in online:
                 raise CliError("device_selection", "Choose an online phone.", devices=online, http_status=409)
             self.args.device = choice
@@ -92,8 +107,8 @@ class Desk(ThreadingHTTPServer):
                         "transport": transport["transport"], "server_version": info.get("server_version"),
                         "capabilities": info["capabilities"], "device": device, "tasks": tasks}
 
-        args = argparse.Namespace(**{**vars(self.args), **data, "command": "task",
-                                     "goal_file": None, "text_file": None, "conversation": None})
+        args = argparse.Namespace(**{**vars(self.args), "conversation": None, **data, "command": "task",
+                                     "goal_file": None, "text_file": None})
         return execute(args, sensitive)
 
 

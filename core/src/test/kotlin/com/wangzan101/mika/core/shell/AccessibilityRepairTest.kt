@@ -28,7 +28,9 @@ class AccessibilityRepairTest {
         val connectAfterMs: Long = 500,
         val result: PermissionResult = PermissionResult.Done,
         var direct: Boolean = false,
+        unlocked: Boolean = true,
     ) {
+        val userUnlocked = MutableStateFlow(unlocked)
         val service = MutableStateFlow(initial)
         val helper = MutableStateFlow(helperStatus)
         val restarts = mutableListOf<Long>()
@@ -49,9 +51,26 @@ class AccessibilityRepairTest {
 
         fun start(s: TestScope) {
             scope = s
-            s.backgroundScope.launch { repair.watch(service, helper) }
+            s.backgroundScope.launch { repair.watch(service, helper, userUnlocked) }
             s.runCurrent()
         }
+    }
+
+    @Test
+    fun waitsForTheFirstUnlockThenRepairs() = runTest {
+        // 开机后还没解锁过:服务本来就绑不上,不动系统里的无障碍列表
+        val rig = Rig(unlocked = false).also { it.start(this) }
+        advanceTimeBy(AccessibilityRepair.WORST_CASE_MS * 2)
+        assertEquals(emptyList<Long>(), rig.restarts)
+        assertNull(rig.repair.last.value)
+        assertEquals(RepairPhase.Idle, rig.repair.phase.value)
+        // 解锁了还是没连上:照常先等一会儿再修
+        val unlockedAt = currentTime
+        rig.userUnlocked.value = true
+        advanceTimeBy(10_000)
+        assertEquals(listOf(unlockedAt + AccessibilityRepair.GRACE_MS), rig.restarts)
+        assertEquals(on, rig.service.value)
+        assertEquals(true, rig.repair.last.value?.restarted)
     }
 
     @Test

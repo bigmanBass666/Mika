@@ -283,13 +283,14 @@ class AndroidSelfCheck(context: Context, private val status: () -> SystemStatus)
             mark("scroll", poll { s.peek().rows().let { it.isNotEmpty() && it.first() != rowsBefore.first() } })
         } else mark("scroll", false)
 
-        // 返回:自检页离开 Mika 屏的最上面(输入法弹着时第一下先收起输入法)
-        var gone = false
-        repeat(BACK_TRIES) {
-            if (gone) return@repeat
-            s.back()
-            gone = poll { withContext(Dispatchers.IO) { !isTestPageOnTop(sh, d.displayId) } }
-        }
+        // 返回:自检页离开 Mika 屏的最上面。刚打完字输入法多半还弹着,那几下是收起输入法(安卓本来如此),不算在次数里
+        val gone = BackPresses.until(
+            tries = BACK_TRIES,
+            maxPresses = BACK_MAX_PRESSES,
+            keyboardUp = { withContext(Dispatchers.IO) { s.keyboardUp() } },
+            press = { s.back() },
+            left = { poll { withContext(Dispatchers.IO) { !isTestPageOnTop(sh, d.displayId) } } },
+        )
         mark("back", gone)
         sampleMain(sh, "actions")
 
@@ -579,6 +580,8 @@ class AndroidSelfCheck(context: Context, private val status: () -> SystemStatus)
         const val FRAME_TRIES = 20
         const val BLANK_SPREAD = 8
         const val BACK_TRIES = 2
+        /** 连收起输入法在内最多按这么多下。 */
+        const val BACK_MAX_PRESSES = 5
         const val ALIVE_MS = 15_000L
         const val ALIVE_STEP_MS = 500L
         /** 这么久画面一点没变就算停了(页面上的数字每 250 毫秒跳一次)。 */

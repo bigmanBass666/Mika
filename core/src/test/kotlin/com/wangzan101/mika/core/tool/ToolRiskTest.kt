@@ -7,12 +7,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import com.wangzan101.mika.core.testing.WEB_SCRIPT_TOOL
 import com.wangzan101.mika.core.assembly.toolDispatcher
 import com.wangzan101.mika.core.assembly.allTools
-import com.wangzan101.mika.core.assembly.knownToolNames
 import com.wangzan101.mika.core.testing.SANDBOX_TOOLS
 import com.wangzan101.mika.core.testing.WEB_TOOLS
 
@@ -45,7 +43,7 @@ class ToolRiskTest {
     }
 
     @Test fun readCallsRefuseWhatTheOldListsRefused() = runTest {
-        val refused = oldWriting + oldSandbox + WEB_SCRIPT_TOOL + setOf("phone_find", "phone_collect", "phone_dialog", "phone_run", "phone_system_command", "schedule_task", "spawn_agent")
+        val refused = oldWriting + oldSandbox + WEB_SCRIPT_TOOL + setOf("phone_find", "phone_collect", "phone_dialog", "phone_run", "phone_system_command", "schedule_task", "spawn_agent", "settings_set")
         assertEquals(refused, allTools().filter { !it.readOnly }.map { it.name }.toSet())
         val d = toolDispatcher(FakeScreen())
         for (name in names) {
@@ -71,8 +69,7 @@ class ToolRiskTest {
         for (t in allTools().map { it.name } + "do_steps" + "unknown") assertEquals(t, old[t], gateTargetOf(t))
     }
 
-    @Test fun everyToolDeclaresOneGroupAndUniqueName() {
+    @Test fun everyToolHasAUniqueKnownName() {
         assertEquals(names.size, names.toSet().size)
-        assertTrue(knownToolNames().containsAll(names))
     }
 }

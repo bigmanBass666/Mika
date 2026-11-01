@@ -3,7 +3,7 @@
 ### invalid: unknown argument
 {"ok":false,"error":"invalid_arguments","message":"bogus: unknown argument for phone_tap; allowed: ref, snapshotId, x, y, target, element, role, clicks. To act on an element, use its ref and snapshotId from the elements of the latest screen read or of the screen in the last action result.","recoverable":true,"moreTools":"From your next call on you also have the full phone tools (phone_observe, phone_list_elements, phone_tap, phone_scroll and the rest), with their descriptions and how to use them."}
 ### invalid: unknown argument (no refs)
-{"ok":false,"error":"invalid_arguments","message":"bogus: unknown argument for phone_launch_app; allowed: package, cold, user.","recoverable":true}
+{"ok":false,"error":"invalid_arguments","message":"bogus: unknown argument for phone_launch_app; allowed: package, cold, user, wait.","recoverable":true}
 ### invalid: not json
 {"ok":false,"error":"invalid_arguments","message":"arguments: not valid JSON","recoverable":true}
 ### invalid: not an object
@@ -37,7 +37,7 @@
 ### tap failed app_in_use_by_user
 {"ok":false,"error":"app_in_use_by_user","message":"The user is using this app on their own screen right now, so it was not opened here. Do not retry immediately: call hand_to_user with reason other to ask the user, or wait and try again later.","recoverable":true,"moreTools":"From your next call on you also have the full phone tools (phone_observe, phone_list_elements, phone_tap, phone_scroll and the rest), with their descriptions and how to use them."}
 ### tap failed app_in_use_by_other_task
-{"ok":false,"error":"app_in_use_by_other_task","message":"Another task is using this app right now. Do something else first, or wait a moment.","recoverable":true,"moreTools":"From your next call on you also have the full phone tools (phone_observe, phone_list_elements, phone_tap, phone_scroll and the rest), with their descriptions and how to use them."}
+{"ok":false,"error":"app_in_use_by_other_task","message":"Another task is using this app right now. Do something else first, or call phone_launch_app for it again with wait (seconds) to wait until it is free and then open it.","recoverable":true,"moreTools":"From your next call on you also have the full phone tools (phone_observe, phone_list_elements, phone_tap, phone_scroll and the rest), with their descriptions and how to use them."}
 ### tap failed app_not_found
 {"ok":false,"error":"app_not_found","message":"That app is not installed or has no launchable screen. Use phone_list_apps to find the exact package.","recoverable":true,"moreTools":"From your next call on you also have the full phone tools (phone_observe, phone_list_elements, phone_tap, phone_scroll and the rest), with their descriptions and how to use them."}
 ### tap failed no_focus

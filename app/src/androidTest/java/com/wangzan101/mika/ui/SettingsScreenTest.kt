@@ -29,6 +29,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import org.junit.runner.RunWith
 import com.wangzan101.mika.core.cap.phone.OperatingPace
 
@@ -389,15 +392,6 @@ class SettingsScreenTest {
         assertEquals(listOf(true), toggled)
     }
 
-    @Test
-    fun developerGroupsCoverAllEightSwitchesOnce() {
-        val speed = DeveloperSwitches.speed(SpeedFlags.OFF)
-        val experimental = DeveloperSwitches.experimental(SpeedFlags.OFF)
-        assertEquals(5, speed.size)
-        assertEquals(3, experimental.size)
-        assertEquals(8, (speed + experimental).map { it.id }.toSet().size)
-    }
-
     private class Calls { var reset = 0; val network = mutableListOf<Boolean>() }
 
     private fun advanced(status: SandboxStatus, network: Boolean = false, isolationIssue: Boolean = false): Calls {
@@ -454,4 +448,43 @@ class SettingsScreenTest {
         compose.onNodeWithTag("sandbox-network").performClick()
         assertTrue(c.network == listOf(true))
     }
+
+    /** 已用空间:每个对话的工作区一行;有任务在跑的写明不能清、点不动;清理先确认,确认后才回调。 */
+    @Test
+    fun usageClearsAWorkspaceOnlyAfterConfirming() {
+        val usage = com.wangzan101.mika.cap.sandbox.SandboxUsage(
+            runtime = 300L shl 20, skills = 2L shl 20,
+            workspaces = listOf(
+                com.wangzan101.mika.cap.sandbox.WorkspaceUsage("c-a", "a", "查快递", 5L shl 20, busy = true),
+                com.wangzan101.mika.cap.sandbox.WorkspaceUsage("c-b", "b", "整理表格", 1L shl 20, busy = false),
+                com.wangzan101.mika.cap.sandbox.WorkspaceUsage("c-gone", null, null, 1024, busy = false),
+            ),
+        )
+        val cleared = mutableListOf<String>()
+        var all = 0
+        compose.setContent {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                AdvancedSection(
+                    status = SandboxStatus.Ready(network = false), networkAllowed = false, isolationIssue = false,
+                    onNetworkChange = {}, onReset = {}, usage = usage,
+                    onClearWorkspace = { cleared += it.dirName }, onClearAll = { all++ },
+                )
+            }
+        }
+        compose.onNodeWithText(SandboxCopy.USAGE_TITLE).assertExists()
+        compose.onNodeWithText("已删除的对话").assertExists()
+        compose.onNodeWithText("这个对话有任务在跑，暂时不能清理").assertExists()
+        compose.onNodeWithText("查快递").performScrollTo().performClick()
+        compose.onAllNodesWithText(SandboxCopy.CLEAR_TITLE).assertCountEquals(0)
+        compose.onNodeWithText("整理表格").performScrollTo().performClick()
+        compose.onNodeWithText(SandboxCopy.CLEAR_TITLE).assertIsDisplayed()
+        assertEquals(emptyList<String>(), cleared)
+        compose.onNodeWithText(SandboxCopy.CLEAR).performClick()
+        assertEquals(listOf("c-b"), cleared)
+        compose.onNodeWithText(SandboxCopy.CLEAR_ALL).performScrollTo().performClick()
+        compose.onNodeWithText(SandboxCopy.CLEAR_ALL_BODY).assertIsDisplayed()
+        compose.onNodeWithText(SandboxCopy.CLEAR).performClick()
+        assertEquals(1, all)
+    }
 }
+

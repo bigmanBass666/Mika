@@ -215,7 +215,7 @@ class AgentLoopMemoryTest {
 
 class MemoryBlockCompressionTest {
     @Test fun memoryBlockSurvivesAggressiveCompression() {
-        val block = Message(Role.User, listOf(Part.Text("关于用户的记忆(用户告诉过你的;可能过时,和用户这次说的冲突时以这次为准):\n1. 用户点外卖不要香菜")), Author.Mika)
+        val block = Message(Role.User, listOf(Part.Text("Memories about the user (things the user told you; may be out of date; when they conflict with what the user says now, follow what they say now):\n1. 用户点外卖不要香菜")), Author.Mika)
         val history = mutableListOf(block, Message(Role.User, listOf(Part.Text("帮我点个外卖")), Author.Mika))
         repeat(30) { i ->
             history += Message(Role.Assistant, listOf(Part.ToolCall("c$i", "phone_observe", "{}")), Author.Mika)

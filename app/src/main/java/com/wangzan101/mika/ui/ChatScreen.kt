@@ -65,6 +65,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -370,6 +371,12 @@ fun ChatScreen(
             bottomInset = composerHeight.toFloat(),
             onExpand = vm::expandPip,
             onCollapse = vm::collapsePip,
+            // 关掉小画面:这个任务结束前只剩右下角的小按钮;提示一句还能去哪看
+            onClose = {
+                vm.closePip()
+                Toast.makeText(context, context.getString(R.string.pip_closed_hint), Toast.LENGTH_SHORT).show()
+            },
+            onReopen = vm::reopenPip,
             // 要你处理时点小窗:收起,滚到要你处理的那张卡片(在最后一问一答里,它后面只可能还有文件卡片和去设置那一行)
             onAttention = {
                 vm.attendPip()
@@ -471,7 +478,7 @@ private fun LazyListScope.exchange(
     val active = ex.status.isActive()
     val answering = ex.status == ExchangeStatus.Working && !ex.draft.isNullOrBlank()
     if (active) {
-        if (!answering) item("s$index") { WorkBlock(ex, reduceMotion, backgroundNote) }
+        if (!answering) item("s$index") { WorkBlock(ex, reduceMotion, backgroundNote, openRun) }
     } else if (ex.steps.isNotEmpty() || ex.runId != null) {
         item("s$index") { DoneLine(ex, reduceMotion, openRun) }
     }
@@ -631,7 +638,7 @@ private fun Modifier.answerSurface(): Modifier =
  * 在后台操作手机时最下面一行小字。
  */
 @Composable
-private fun WorkBlock(ex: Exchange, reduceMotion: Boolean, backgroundNote: Boolean) {
+private fun WorkBlock(ex: Exchange, reduceMotion: Boolean, backgroundNote: Boolean, openRun: (String) -> Unit) {
     val c = MikaTheme.colors
     val paused = ChatCopy.paused(ex.status)
     val elapsed = rememberElapsed(ex.startedAt)
@@ -651,7 +658,16 @@ private fun WorkBlock(ex: Exchange, reduceMotion: Boolean, backgroundNote: Boole
             )
             if (elapsed != null) Text(ChatCopy.clock(elapsed), style = ClockText, color = c.ink3)
         }
-        if (ex.steps.isNotEmpty()) StepLine(ex.steps, live = true, paused = paused)
+        if (ex.steps.isNotEmpty()) StepLine(ex.steps, ex.stepActions, live = true, paused = paused)
+        // 跑的时候就能进运行过程(页面按秒接着长);结束后收进「做了 N 步 · 查看过程」那一行
+        ex.runId?.let { id ->
+            Text(
+                stringResource(R.string.chat_view_process),
+                Modifier.padding(top = 2.dp).clip(MikaShapes.Pill).clickable(role = Role.Button) { openRun(id) }
+                    .padding(horizontal = 4.dp, vertical = 4.dp).testTag("work-view-process"),
+                style = DoneText.copy(fontStyle = FontStyle.Italic, textDecoration = TextDecoration.Underline), color = c.ink3,
+            )
+        }
         if (backgroundNote) {
             Row(
                 Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically,
@@ -684,9 +700,11 @@ private enum class Dot { Done, Current, Paused, Dim }
  * 前面的收成一行,点开看全部。
  */
 @Composable
-private fun StepLine(steps: List<StepRow>, live: Boolean, paused: Boolean) {
+private fun StepLine(steps: List<StepRow>, actions: Map<Int, List<StepAction>>, live: Boolean, paused: Boolean) {
     val c = MikaTheme.colors
     var all by rememberSaveable { mutableStateOf(!live) }
+    // 哪几步点开了:按这一屏里的序号记,列表变长也不乱
+    val expanded = remember { mutableStateMapOf<Int, Boolean>() }
     val hidden = if (all) 0 else (steps.size - ChatCopy.VISIBLE_STEPS).coerceAtLeast(0)
     Column(
         Modifier.padding(top = 6.dp).fillMaxWidth().drawBehind {
@@ -698,24 +716,39 @@ private fun StepLine(steps: List<StepRow>, live: Boolean, paused: Boolean) {
             StepItem(ChatCopy.earlierSteps(hidden), "", Dot.Dim, current = false, link = true, onClick = { all = true })
         }
         steps.drop(hidden).forEachIndexed { i, row ->
-            val isLast = hidden + i == steps.lastIndex
+            val key = hidden + i
+            val isLast = key == steps.lastIndex
             val dot = when {
                 live && isLast && paused -> Dot.Paused
                 live && isLast && row.state == StepState.Run -> Dot.Current
                 row.state == StepState.Dim -> Dot.Dim
                 else -> Dot.Done
             }
-            StepItem(row.text, row.subtitle, dot, current = dot == Dot.Current || dot == Dot.Paused)
+            val open = expanded[key] == true
+            val detail = actions[row.step].orEmpty()
+            StepItem(
+                row.text, row.subtitle, dot, current = dot == Dot.Current || dot == Dot.Paused,
+                actions = detail, open = open,
+                // 有具体动作才点得开:点开看这一步实际做了什么、对什么、结果如何
+                onClick = if (detail.isEmpty()) null else ({ expanded[key] = !open }),
+            )
         }
     }
 }
 
 @Composable
-private fun StepItem(text: String, subtitle: String, dot: Dot, current: Boolean, link: Boolean = false, onClick: (() -> Unit)? = null) {
+private fun StepItem(
+    text: String, subtitle: String, dot: Dot, current: Boolean, link: Boolean = false, onClick: (() -> Unit)? = null,
+    actions: List<StepAction> = emptyList(), open: Boolean = false,
+) {
     val c = MikaTheme.colors
     Row(
         Modifier.fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClickLabel = stringResource(R.string.chat_expand_steps), onClick = onClick) else Modifier)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(onClickLabel = stringResource(if (open) R.string.collapse else R.string.chat_expand_steps), onClick = onClick)
+                } else Modifier,
+            )
             .heightIn(min = 28.dp).padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -732,7 +765,20 @@ private fun StepItem(text: String, subtitle: String, dot: Dot, current: Boolean,
                 maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
             if (subtitle.isNotEmpty()) Text(subtitle, style = MikaType.Hint, color = c.ink3, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            // 点开:这一步实际做的几件事,一件一行「做了什么 · 对什么 · 结果」,说法和运行过程页一样
+            if (open) actions.forEach { a ->
+                Text(
+                    ChatCopy.actionLine(a), Modifier.padding(top = 2.dp),
+                    style = MikaType.Hint, color = if (a.failed) c.bad else c.ink3, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
+        // 能点开的只有有动作的那些:右边一个小箭头,点开时朝下
+        if (actions.isNotEmpty()) Icon(
+            MikaIcons.Chevron, null,
+            Modifier.padding(start = 6.dp).size(12.dp).graphicsLayer { rotationZ = if (open) 90f else 0f },
+            tint = c.ink3,
+        )
     }
 }
 
@@ -805,7 +851,7 @@ private fun DoneLine(ex: Exchange, reduceMotion: Boolean, openRun: (String) -> U
                 )
             }
         }
-        Reveal(open && ex.steps.isNotEmpty(), reduceMotion) { StepLine(ex.steps, live = false, paused = false) }
+        Reveal(open && ex.steps.isNotEmpty(), reduceMotion) { StepLine(ex.steps, ex.stepActions, live = false, paused = false) }
     }
 }
 
@@ -876,9 +922,13 @@ private fun StatusCard(
             CardButton(stringResource(R.string.chat_refuse), onClick = { vm.decline(status.key) })
             CardButton(stringResource(R.string.chat_allow_once), primary = true, onClick = { vm.approve(status.key) })
         }
-        is ExchangeStatus.Paused -> NeedCard(stringResource(R.string.chat_paused), status.why) {
+        is ExchangeStatus.Paused -> NeedCard(stringResource(if (status.resumable) R.string.chat_paused else R.string.chat_waiting_for_you), status.why) {
             CardButton(stringResource(R.string.action_cancel_task), onClick = vm::cancel)
-            CardButton(stringResource(R.string.chat_continue), primary = true, onClick = vm::resume)
+            if (status.resumable) CardButton(stringResource(R.string.chat_continue), primary = true, onClick = vm::resume)
+        }
+        // 排队等开始:轮到时自动开始,点继续不能插队,只给取消
+        is ExchangeStatus.Queued -> NeedCard(stringResource(R.string.chat_queued), status.why) {
+            CardButton(stringResource(R.string.action_cancel_task), onClick = vm::cancel)
         }
         // 长按整块回答弹菜单;复制、引用的只是回答的字,不带上面的提示和下面的来源
         is ExchangeStatus.Done -> Box(Modifier.padding(bottom = 12.dp)) {
@@ -1197,6 +1247,16 @@ internal fun Composer(
                     }
                 }
                 val canSend = AttachTray.canSend(text, attachments, importing)
+                // 键盘出来以后长按输入框留给系统选字;话筒按住才听,点一下只提示按住
+                if (fieldFocused && vh != null) {
+                    val hint = stringResource(R.string.voice_hold_to_talk)
+                    Box(
+                        Modifier.size(MikaSize.IconButton).testTag("composer-mic").holdToTalk(vh) { vh.toast = hint },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(MikaIcons.Mic, hint, Modifier.size(MikaSize.Icon), tint = c.ink)
+                    }
+                }
                 // 任务在跑时停止一直在;写了字再多一个发送,发出去的话交给当前任务
                 if (busy) {
                     Box(

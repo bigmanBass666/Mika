@@ -95,6 +95,20 @@ The Apache Software Foundation (https://www.apache.org/).
 - License: Apache-2.0(依据各自 POM)
 - Usage: 以库的形式依赖,打进 APK。
 
+## OpenTelemetry
+
+- Project: https://github.com/open-telemetry/opentelemetry-proto-java
+- Artifacts: OTLP trace, common, resource and collector schemas from `io.opentelemetry.proto:opentelemetry-proto:1.11.1-alpha` (build-time only).
+- License: Apache-2.0
+- Usage: Generate lite OTLP trace messages.
+
+## Protocol Buffers
+
+- Project: https://github.com/protocolbuffers/protobuf
+- Artifact: `com.google.protobuf:protobuf-javalite:4.36.2`
+- License: BSD-3-Clause (see `app/src/main/assets/licenses/Protocol-Buffers.txt`).
+- Usage: Official OTLP messages.
+
 ## OkHttp
 
 - Project: https://square.github.io/okhttp/

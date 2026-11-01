@@ -26,6 +26,7 @@ import com.wangzan101.mika.record.RunStore
 import com.wangzan101.mika.R
 import com.wangzan101.mika.cap.web.KeptPage
 import com.wangzan101.mika.core.cap.web.KeptPageClose
+import com.wangzan101.mika.i18n.tr
 import com.wangzan101.mika.chat.ConversationStore
 import java.util.UUID
 import kotlinx.coroutines.withContext
@@ -506,10 +507,22 @@ class CapsuleController(
      * 再写成带屏幕的一句话([UserScreenMessage])照常发出;存不下就不发。
      */
     private fun deliver(c: CardView, kind: CardInputKind, shot: CapturedScreen, words: String) {
+        val access = (context.applicationContext as MikaApp).appAccess.current()
+        if (shot.sourcePackages.isEmpty() || shot.sourcePackages.any { !access.canShare(it) }) {
+            inputUi = inputUi.copy(screen = null)
+            android.widget.Toast.makeText(context, tr(R.string.appaccess_share_expired), android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         val conversationId = CapsuleCards.conversationOf(c) ?: ConversationStore.shared(context).newConversation()
         scope.launch {
             val saved = runCatching { (context.applicationContext as MikaApp).userScreens.save(conversationId, shot) }
                 .onFailure { Log.w(TAG, "could not save the screen", it) }.getOrNull() ?: return@launch
+            val latest = (context.applicationContext as MikaApp).appAccess.current()
+            if (shot.sourcePackages.any { !latest.canShare(it) }) {
+                inputUi = inputUi.copy(screen = null)
+                android.widget.Toast.makeText(context, tr(R.string.appaccess_share_expired), android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
             submit(c, kind, UserScreenMessage.compose(saved.id, words), conversationId)
             refresh()
         }
@@ -565,12 +578,28 @@ class CapsuleController(
             }
             // 空着的那个窗口(展开时一颗那个、收起时卡片那个)不画东西,不用等它
             suspend fun <T> OverlayWindow.hidden(block: suspend () -> T): T = if (height > 0) hiddenWhile(block) else block()
-            val (shot, read) = w.hidden { c.hidden { MainScreenCapture.shoot(service) } }
+            val store = (context.applicationContext as MikaApp).appAccess
+            val sources = MainScreenCapture.sourcePackages(service) ?: return null
+            if (context.packageName in sources || !store.current().available) return null
+            for (pkg in sources) {
+                if (!store.current().canShare(pkg) && !com.wangzan101.mika.cap.phone.a11y.requestScreenShare(service, store, pkg, appLabel(pkg))) return null
+            }
+            val capture = w.hidden { c.hidden {
+                if (MainScreenCapture.sourcePackages(service) != sources || sources.any { !store.current().canShare(it) }) null
+                else MainScreenCapture.shoot(service)
+            } } ?: return null
+            val (shot, read) = capture
+            if (MainScreenCapture.sourcePackages(service) != sources || sources.any { !store.current().canShare(it) }) {
+                (shot as? ScreenAccessibility.MainShot.Ok)?.bitmap?.recycle()
+                return null
+            }
             flash++
             wake()
             val area = service.overlays().area()
             val r = MainScreenCapture.build(service, shot, read, area.insetTop, area.insetBottom) { ConfirmationNotifier.appLabel(context, it) }
-            return (r as? MainScreenCapture.Result.Captured)?.shot
+            if (sources.any { !store.current().canShare(it) } || MainScreenCapture.sourcePackages(service) != sources) return null
+            val captured = (r as? MainScreenCapture.Result.Captured)?.shot ?: return null
+            return CapturedScreen(captured.jpeg, captured.screen, sources)
         } finally {
             capturing = false
         }
@@ -737,7 +766,10 @@ class CapsuleController(
         zoomed = false
         val run = key?.let(::runFor) ?: return
         previewJob = scope.launch {
-            run.frames.filterNotNull().previewFrames(same = ::sameFrame).flowOn(Dispatchers.Default).collect { preview = it }
+            launch { run.frames.collect { if (it == null) preview = null } }
+            run.frames.filterNotNull().previewFrames(same = ::sameFrame).flowOn(Dispatchers.Default).collect {
+                preview = it.takeIf { run.frames.value != null }
+            }
         }
     }
 
@@ -753,10 +785,6 @@ class CapsuleController(
             keeper.frames().filterNotNull().previewFrames(same = ::sameFrame).flowOn(Dispatchers.Default).collect { preview = it }
         }
     }
-
-    /** 新的一帧和上一张一样(同一张图,或尺寸相同、像素都相同)就不推:网页画面每次给的是新拷贝。 */
-    private fun sameFrame(a: Bitmap, b: Bitmap): Boolean =
-        a === b || !a.isRecycled && !b.isRecycled && a.width == b.width && a.height == b.height && a.sameAs(b)
 
     // ---------- 位置与拖动 ----------
 

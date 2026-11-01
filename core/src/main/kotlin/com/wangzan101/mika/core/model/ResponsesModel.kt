@@ -13,10 +13,9 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * 请求时带的 Bearer 令牌。[fresh] 为真表示上一个被拒了(HTTP 401),要先换一个新的;换不到抛 [ModelError]。
@@ -105,12 +104,14 @@ class ResponsesModel(
             if (includeReasoning) putJsonArray("include") { add(ENCRYPTED_REASONING) }
         }
 
-    private fun request(bearer: String?, system: String, messages: List<Message>, tools: List<ToolSpec>, includeReasoning: Boolean): Request =
+    private suspend fun request(bearer: String?, system: String, messages: List<Message>, tools: List<ToolSpec>, includeReasoning: Boolean): Request =
         Request.Builder().url(endpoint)
             .withHeaders(headers)
             .apply { if (!bearer.isNullOrEmpty()) header("Authorization", "Bearer $bearer") }
             .header("Accept", "text/event-stream")
-            .post(body(system, messages, tools, includeReasoning).toString().toRequestBody("application/json".toMediaType()))
+            .postInference(InferenceProtocol.Responses, body(system, messages, tools, includeReasoning)) {
+                if (chatGptPlan || endpoint.toHttpUrlOrNull()?.host == "api.openai.com") "openai" else "openai_compatible"
+            }
             .build()
 
     private fun toolJson(t: ToolSpec): JsonObject = buildJsonObject {

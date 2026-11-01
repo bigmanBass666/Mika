@@ -39,6 +39,8 @@ data class SystemStatus(
     val restrictedSettings: Boolean = false,
     /** 助手停了以后靠什么再起来:只用 USB 启动命令起过时,各处都不往无线调试引,说清要再运行命令。 */
     val helperRestart: HelperRestart = HelperRestart.None,
+    /** 开机后用户还没解锁过一次([android.os.UserManager.isUserUnlocked] 为假):无障碍服务这时本来就绑不上。 */
+    val userLocked: Boolean = false,
 )
 
 fun SystemStatus.notificationOverview() = NotificationOverview.of(
@@ -50,7 +52,8 @@ sealed interface Problem {
     data object SystemTooOld : Problem
     /** 内置助手没在运行(没设置、无线调试关着、正在连、出错)。 */
     data class PhoneHelper(val status: BuiltinShellStatus) : Problem
-    data class Accessibility(val state: AccessibilityState) : Problem
+    /** [userLocked] 为真时没在运行是因为开机后还没解锁过,解锁后会自己恢复,不该让用户去关掉再打开。 */
+    data class Accessibility(val state: AccessibilityState, val userLocked: Boolean = false) : Problem
     data object NoModel : Problem
     /** 不挡任务,只是看不到进度和「需要你」提醒。 */
     data object NotificationsOff : Problem
@@ -85,7 +88,9 @@ object Prerequisites {
             if (status.sdkInt >= MIN_SDK && status.builtinShell != BuiltinShellStatus.Running) {
                 add(Problem.PhoneHelper(status.builtinShell))
             }
-            if (status.sdkInt >= MIN_SDK && status.accessibility != AccessibilityState.On) add(Problem.Accessibility(status.accessibility))
+            if (status.sdkInt >= MIN_SDK && status.accessibility != AccessibilityState.On) {
+                add(Problem.Accessibility(status.accessibility, status.userLocked))
+            }
             if (!hasMainModel) add(Problem.NoModel)
             if (!status.notificationsAllowed) add(Problem.NotificationsOff)
             else if (status.attentionLowered || status.resultLowered) add(Problem.AttentionLowered(status.attentionLowered, status.resultLowered))

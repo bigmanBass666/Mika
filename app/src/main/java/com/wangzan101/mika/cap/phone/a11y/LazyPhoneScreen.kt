@@ -3,6 +3,7 @@ package com.wangzan101.mika.cap.phone.a11y
 import com.wangzan101.mika.core.uistate.ActionResult
 import com.wangzan101.mika.core.uistate.AfterTaskMarks
 import com.wangzan101.mika.core.uistate.AppCopy
+import com.wangzan101.mika.core.uistate.AppWait
 import com.wangzan101.mika.core.uistate.ScreenCheck
 import com.wangzan101.mika.core.uistate.ScreenPort
 import com.wangzan101.mika.core.uistate.ScreenSnapshot
@@ -59,6 +60,9 @@ class LazyPhoneScreen(
     override suspend fun openApp(packageName: String, cold: Boolean): ActionResult = built()?.openApp(packageName, cold) ?: unavailable()
     override suspend fun openAppCopy(packageName: String, userId: Int, cold: Boolean): ActionResult =
         built()?.openAppCopy(packageName, userId, cold) ?: unavailable()
+    // 被别的任务占着才会等,那时手机早已接上;没接上就没什么可等
+    override suspend fun awaitAppFree(packageName: String, userId: Int?, timeoutMs: Long): AppWait =
+        port?.awaitAppFree(packageName, userId, timeoutMs) ?: AppWait.Unsupported
     override suspend fun openLink(action: String?, uri: String?, packageName: String?): ActionResult =
         built()?.openLink(action, uri, packageName) ?: unavailable()
     override suspend fun shareText(packageName: String, text: String): ActionResult = built()?.shareText(packageName, text) ?: unavailable()

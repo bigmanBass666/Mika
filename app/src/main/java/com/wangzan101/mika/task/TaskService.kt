@@ -129,6 +129,9 @@ class TaskService : Service() {
     }
 
     internal fun reservePackage(pkg: String, runKey: String, stillUsed: () -> Boolean) = center.reserve(pkg, runKey, stillUsed)
+    internal fun packageFree(pkg: String, runKey: String, stillUsed: () -> Boolean) = center.appFree(pkg, runKey, stillUsed)
+    internal suspend fun awaitPackage(pkg: String, runKey: String, timeoutMs: Long, free: suspend () -> Boolean) =
+        center.awaitApp(pkg, runKey, timeoutMs, free)
 
     /** 这个对话空着就当场开始;还有任务就留着,它收尾时([onRunEnded])交出来。查与留在同一把锁里。 */
     internal fun deferMessage(threadId: String, text: String) {
@@ -323,6 +326,14 @@ class TaskService : Service() {
             } catch (e: RemoteException) {
                 run.shellDied = true
                 TaskState.Failed(SHELL_DIED, FailKind.Environment)
+            } catch (e: com.wangzan101.mika.core.access.AppAccessDenied) {
+                val reason = when (e.code) {
+                    "app_blocked" -> tr(R.string.task_app_blocked, e.packageName ?: tr(R.string.task_app_this_app))
+                    "app_access_unavailable" -> tr(R.string.task_app_access_unavailable)
+                    "app_access_protected" -> tr(R.string.task_app_protected)
+                    else -> tr(R.string.task_app_unverified)
+                }
+                TaskState.Failed(reason, FailKind.Environment)
             } catch (e: Exception) {
                 TaskState.Failed(tr(R.string.task_error, e.message ?: e::class.simpleName), FailKind.Environment)
             }
@@ -962,7 +973,12 @@ class TaskService : Service() {
                 state.step == 0 -> state.note
                 else -> tr(R.string.task_step_note, state.step, state.note).trimEnd(':', ' ')
             })
-            is TaskState.Held -> if (state.reason == TaskGate.LOCKED) tr(R.string.task_wait_unlock) to tr(R.string.task_wait_unlock_body) else tr(R.string.chat_paused) to state.reason.why
+            is TaskState.Held -> when {
+                state.reason == TaskGate.LOCKED -> tr(R.string.task_wait_unlock) to tr(R.string.task_wait_unlock_body)
+                state.reason.queued -> tr(R.string.chat_queued) to state.reason.why
+                state.reason.resumable -> tr(R.string.chat_paused) to state.reason.why
+                else -> tr(R.string.chat_waiting_for_you) to state.reason.why
+            }
             is TaskState.WaitingTakeover -> tr(R.string.takeover_title) to state.message
             is TaskState.WaitingInput -> tr(R.string.input_title) to state.prompt
             is TaskState.WaitingConfirmation -> ConfirmationCopy.title(state.request) to ConfirmationCopy.body(state.request, appLabel(state.request.app))

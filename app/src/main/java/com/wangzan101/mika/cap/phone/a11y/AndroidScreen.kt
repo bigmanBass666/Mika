@@ -21,6 +21,8 @@ import android.view.accessibility.AccessibilityWindowInfo
 import com.wangzan101.mika.core.cap.phone.GesturePacing
 import com.wangzan101.mika.core.cap.phone.TypingPacing
 import com.wangzan101.mika.core.uistate.ActionResult
+import com.wangzan101.mika.core.uistate.APP_IN_USE_BY_OTHER_TASK
+import com.wangzan101.mika.core.uistate.AppWait
 import com.wangzan101.mika.core.uistate.AppCopy
 import com.wangzan101.mika.core.uistate.AppProfiles
 import com.wangzan101.mika.core.uistate.LaunchChoice
@@ -114,6 +116,15 @@ class AndroidScreen(
     private val beforeOpen: (packageName: String, user: Int?) -> Unit = { _, _ -> },
     /** 启动被拒、没开出来:撤回 [beforeOpen] 提前做的。 */
     private val notOpened: (packageName: String, user: Int?) -> Unit = { _, _ -> },
+    override val appAccess: com.wangzan101.mika.core.access.AppAccessPolicy = com.wangzan101.mika.core.access.AppAccessPolicy.ALLOW,
+    /** 并行任务时:按占用登记,本任务此刻能不能占这个包([user] 那份;null 为本来那份)。只查不占。 */
+    private val appFree: (packageName: String, user: Int?) -> Boolean = { _, _ -> true },
+    /**
+     * 并行任务时:等别的任务放开这个包,最多那么久;[free] 是完整的判断(别的屏上没有它、登记里也没人占)。
+     * 任务服务据此登记「谁在等谁」、认出互相等,等的时候界面写「等另一个任务用完某 App」。
+     */
+    private val awaitApp: suspend (packageName: String, user: Int?, timeoutMs: Long, free: suspend () -> Boolean) -> AppWait =
+        { _, _, _, _ -> AppWait.Unsupported },
 ) : ScreenPort {
     /** 屏还没建时为 -1;只在确认屏已建好之后用。 */
     private val displayId get() = display.current?.displayId ?: -1
@@ -142,6 +153,17 @@ class AndroidScreen(
     private val settingsPackage: String? by lazy { SystemPickers.settingsPackage(a11y.packageManager) }
 
     private fun windows() = a11y.windowsOn(displayId)
+    /**
+     * 应用访问的窗口探针:屏上各 App 窗口的归属,只读根节点的包名、不读内容。读不到根节点的那一项为 null(归属未知);
+     * 没有 App 窗口时是最上面任务的 App,也没有就是空屏(空列表)。规则和读屏结果里的窗口归属一致。
+     */
+    suspend fun accessPackages(): List<String?> = withContext(Dispatchers.IO) {
+        if (!hasDisplay) return@withContext emptyList()
+        val packages = windows().filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .map { it.root?.packageName?.toString() }
+        packages.ifEmpty { listOfNotNull(foregroundTaskPackage()) }
+    }
+
     private fun read() = ScreenReader.read(windows(), display.width, display.height)
     private fun treeHash() = ScreenReader.hash(windows())
 
@@ -616,6 +638,9 @@ class AndroidScreen(
 
     private fun ctrlKey(keyCode: Int): Boolean = runCatching { shell.injectCtrlKey(displayId, keyCode) }.getOrDefault(false)
 
+    /** 这块屏上弹着输入法(这时按返回,安卓先收起输入法)。 */
+    fun keyboardUp(): Boolean = hasDisplay && imeBox() != null
+
     /** 这块屏上输入法窗口的范围(0–999 的 [l,t,r,b]);没弹输入法为 null。弹着时它上面的字不算屏上的字。 */
     private fun imeBox(): List<Int>? {
         val w = windows().firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } ?: return null
@@ -637,12 +662,29 @@ class AndroidScreen(
     override suspend fun openAppCopy(packageName: String, userId: Int, cold: Boolean): ActionResult =
         open(packageName, userId.takeIf { it != myUser }, cold)
 
+    /**
+     * 等别的任务放开 [packageName](模型打开它时要了等):放开指别的屏上已经没有它、占用登记里也没有别的任务占着。
+     * 只在并行任务时有意义,否则没有别的任务和它争。
+     */
+    override suspend fun awaitAppFree(packageName: String, userId: Int?, timeoutMs: Long): AppWait {
+        if (!checkOtherTasks) return AppWait.Unsupported
+        val user = userId?.takeIf { it != myUser }
+        return awaitApp(packageName, user, timeoutMs) {
+            withContext(Dispatchers.IO) { !onOtherDisplay(packageName, user) && appFree(packageName, user) }
+        }
+    }
+
+    /** 这个包([user] 那份)此刻开在 Mika 的另一块屏上(别的任务手里)。 */
+    private fun onOtherDisplay(packageName: String, user: Int?): Boolean {
+        val other = runCatching { if (user == null) shell.displayOfPackage(packageName) else shell.displayOfPackageInUser(packageName, user) }.getOrDefault(-1)
+        return other >= 0 && other != display.current?.displayId
+    }
+
     /** [openApp] / [openAppCopy] 的共同部分;[user] 为空是本来那份。 */
     private suspend fun open(packageName: String, user: Int?, cold: Boolean): ActionResult = withContext(Dispatchers.IO) {
         // 同一个 App 不能同时在两块屏上:系统会把整个任务挪过来,等于从另一个任务手里抢走它。装了两份的,两份各算各的
         if (checkOtherTasks) {
-            val other = runCatching { if (user == null) shell.displayOfPackage(packageName) else shell.displayOfPackageInUser(packageName, user) }.getOrDefault(-1)
-            if (other >= 0 && other != display.current?.displayId) return@withContext IN_USE_BY_OTHER
+            if (onOtherDisplay(packageName, user)) return@withContext IN_USE_BY_OTHER
             if (!(if (user == null) reserve(packageName) else reserveCopy(packageName, user))) return@withContext IN_USE_BY_OTHER
         }
         // 打开前最上面的窗口:之后冒出来的才可能是这次打开引起的选择框(上次没选、又打开一次时还是同一个选择框)
@@ -832,15 +874,17 @@ class AndroidScreen(
      * 设置页预期落在系统设置所在的包,指定了 App 的落在那个 App;落到别处(系统选择器、跳转页)照样成功,带提示。
      */
     override suspend fun openLink(action: String?, uri: String?, packageName: String?): ActionResult = withContext(Dispatchers.IO) {
+        // 指定了 App 的由应用访问边界看过;没指定的,名单非空时在这里挑一个没被禁用的接手
+        val pinned = packageName ?: allowedLinkHandler(action, uri)
         val id = display.get().displayId
-        val expected = packageName ?: settingsPackage.takeIf { action != null }
+        val expected = pinned ?: settingsPackage.takeIf { action != null }
         if (checkOtherTasks && expected != null && !reserve(expected)) return@withContext IN_USE_BY_OTHER
         val before = ScreenReader.topPackage(windows())
         val beforeTree = treeHash()
         // 事先知道由谁打开的(指定了 App、设置页、只有一个 App 接的链接):启动前先静上
         val early = expected ?: linkHandler(action, uri)
         early?.let { beforeOpen(it, null) }
-        val code = shell.startView(id, action, uri, packageName)
+        val code = shell.startView(id, action, uri, pinned)
         if (code != ShellService.START_OK) early?.let { notOpened(it, null) }
         when (code) {
             ShellService.START_OK -> Unit
@@ -869,6 +913,27 @@ class AndroidScreen(
             _target.value = TargetApp(opened, task, userOf(task))
         }
         ok(hint = if (expected != null && top != expected) hintLinkElsewhere(top, expected) else null)
+    }
+
+    /**
+     * 禁用名单非空、链接没指定 App 时由谁打开:系统默认的那个没被禁用就用它,不然用第一个没被禁用的;能接的全被禁用就拒绝。
+     * 名单为空、或没有 App 能接时为 null(照常交给系统,不多查一次)。
+     */
+    private fun allowedLinkHandler(action: String?, uri: String?): String? {
+        val access = appAccess.current()
+        if (access.blocked.isEmpty()) return null
+        val intent = Intent(action ?: Intent.ACTION_VIEW).apply {
+            uri?.let { data = android.net.Uri.parse(it) }
+            addCategory(Intent.CATEGORY_DEFAULT)
+        }
+        val pm = a11y.packageManager
+        val candidates = runCatching { pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY).map { it.activityInfo.packageName }.distinct() }
+            .getOrDefault(emptyList())
+        if (candidates.isEmpty()) return null
+        val allowed = candidates.filter { access.denial(it) == null }
+        if (allowed.isEmpty()) access.denial(candidates.first())?.let { throw it }
+        val default = runCatching { pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName }.getOrNull()
+        return default?.takeIf { it in allowed } ?: allowed.first()
     }
 
     /** 没指定 App 的链接由谁打开:系统直接定下的那一个;要问用户选(落在系统选择器)或读不到为 null。 */
@@ -911,7 +976,11 @@ class AndroidScreen(
             }
         }.getOrDefault(emptyList())
         val default = runCatching { pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName }.getOrNull()
-        val handler = SystemIntents.choose(handlers, default)
+        // 由谁接只有这里知道:跳过被禁用的;能接的全被禁用就拒绝
+        val access = appAccess.current()
+        val allowedHandlers = if (access.blocked.isEmpty()) handlers else handlers.filter { access.denial(it.packageName) == null }
+        if (handlers.isNotEmpty() && allowedHandlers.isEmpty()) access.denial(handlers.first().packageName)?.let { throw it }
+        val handler = SystemIntents.choose(allowedHandlers, default)
             ?: return@withContext SystemActionResult(ActionResult.Failed(SystemActionResult.NOT_SUPPORTED))
         val pkg = handler.packageName
         intent.component = android.content.ComponentName(pkg, handler.className)
@@ -1170,6 +1239,8 @@ class AndroidScreen(
         for (v in MainScreenSpill.decide(arrivals, w.since, SPILL_WINDOW_MS, w.topBefore, notSpills, userTaps.toList())) {
             val a = v.arrival
             val pkg = a.packageName ?: continue
+            // 开到用户主屏上的不在应用访问边界看的那块屏上:被禁用的不挪、不读
+            appAccess.current().denial(pkg)?.let { throw it }
             last = when (v) {
                 // 系统问打开哪一个的先按选择框处理;要用户亲手处理的弹窗(登录验证、账号确认一类)留在主屏,不挪到 Mika 的屏上
                 is MainScreenSpill.PullBack -> leaveForUser(a, pkg, w) ?: leavePopup(a, pkg) ?: pullBack(a, pkg) ?: last
@@ -1355,6 +1426,8 @@ class AndroidScreen(
      * 只看有没有,不读里面写了什么。
      */
     private suspend fun needsUser(pkg: String): Boolean {
+        // 读的是用户主屏上的窗口,应用访问边界看不到:被禁用的不读
+        appAccess.current().denial(pkg)?.let { throw it }
         // 刚上来的窗口要一会儿才读得到:读得到内容(或看到密码框)就下结论,到时限还读不到再看是不是防截屏
         val deadline = SystemClock.uptimeMillis() + PICK_READ_MS
         while (true) {
@@ -1808,7 +1881,7 @@ class AndroidScreen(
         const val COPY_NOT_OPENED = "copy_not_opened"
         const val HINT_PASTE_BLOCKED = "The text could not be entered: the field is not in the element list, so it can only be pasted, " +
             "and the clipboard could not be used safely right now. Call hand_to_user so the user can type it."
-        val IN_USE_BY_OTHER = ActionResult.Failed("app_in_use_by_other_task")
+        val IN_USE_BY_OTHER = ActionResult.Failed(APP_IN_USE_BY_OTHER_TASK)
 
         const val QUIET_MS = 500L
 
