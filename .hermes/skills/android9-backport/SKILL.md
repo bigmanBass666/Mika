@@ -148,6 +148,12 @@ grep -rn "MIN_SDK\s*=\|sdkInt < " app/src/main core/src/main | head
 
 ## Pitfalls
 
+- **`api-versions.xml` 里的方法名带参数和返回签名**（`registerFrameCommitCallback(Ljava/lang/Runnable;)V`）。拿整串去匹配源码永远查不到，先 `.split("(")[0]` 再比对。
+- **静态扫描的假阳性能占九成**：项目自有符号（`conversationId`）、Kotlin 标准库（`isBlank`/`repeat`/`takeWhile`）、OkHttp（`newCall`）全都会撞上同名 Android API。**以真机崩溃栈为准**，扫描只用来排优先级和兜底。
+- **`catch (e: Exception)` 兜不住 `NoSuchMethodError`** —— 它是 `Error`，不是 `Exception`。要么用 `runCatching`（捕 `Throwable`），要么显式 `catch (Throwable)`。判断某处调用"已安全"之前，先看它到底被什么捕获。
+- **vivo 安装器要等 UI 渲染**：`am start -a VIEW` 之后立刻 `input tap` 会点空。等 4 秒，再用 `uiautomator dump` 现查「继续安装」的 bounds（会变），别写死坐标。
+- **Compose 的 TextField 不吃 `adb input text`**：`input text` 注入的字符会被输入法搅成乱序，而 `uiautomator dump` 又读不出自绘控件里的内容（`text` 恒为空）。验证 UI 交互只能 `screencap` + 看图。
+- **装完包 helper 必掉**：任何覆盖安装都会杀掉 `:helper` 进程，phone use 随即失效，必须重跑 `usb-start.sh`。自动化脚本里要把这一步写死。
 - **浅克隆（`--depth=1`）会让 fork 推不上去**：远端有完整历史，本地只有 1 个提交 → `push rejected (fetch first)`。先 `git fetch --unshallow` 再谈 rebase。
 - **上游可能在你适配期间改动同一批文件**。本案例 8 小时内上游推了 39 个提交、321 个文件，正好动了我改的全部 11 个文件 —— 这种情况下**不要强行 rebase**，先把适配推到独立分支（`android9-compat`）保住成果，rebase 单独一轮做。
 - **`gradlew.bat` 反复假 modified**：项目里没有 `.gitattributes` 时行尾策略只存在于机器级全局配置，换环境就失效。解法见 `cross-agent-skill-portability` 与项目自己的 `.gitattributes`。
