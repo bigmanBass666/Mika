@@ -197,6 +197,9 @@ open class ScreenAccessibility : AccessibilityService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return event.displayId
         val windowId = event.windowId
         if (windowId == -1) return Display.INVALID_DISPLAY
+        // getWindowsOnAllDisplays 是 API 30 才有;Android 9 只有一块屏,
+        // 事件带了窗口号就必然在主屏上,不必反查窗口属于哪块屏。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return Display.DEFAULT_DISPLAY
         val all = windowsOnAllDisplays
         for (i in 0 until all.size()) {
             if (all.valueAt(i).any { it.id == windowId }) return all.keyAt(i)
