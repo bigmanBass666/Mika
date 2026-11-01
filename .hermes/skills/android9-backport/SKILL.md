@@ -164,11 +164,62 @@ grep -rn "MIN_SDK\s*=\|sdkInt < " app/src/main core/src/main | head
 - **debug 签名变了，脚本里的 `certPin` 就失效**：每次重装都要让 App 重写启动脚本（脚本会带新的签名指纹）。
 - **`android:foregroundServiceType` 在低版本被忽略**，不会崩；别为它加守卫。
 
+## 装机与验收流程（vivo + adb，已实战验证）
+
+`adb install` 一律 `Failure [-200]`，必须走 UI。**装前必须确认屏幕亮着且已解锁** —— 息屏/锁屏时安装器会被拉到后台，`input tap` 全部落空，表现就是「安装没反应」。
+
+```bash
+# 0. 亮屏 + 保持常亮 + 解锁
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell svc power stayon true
+adb shell settings put system screen_off_timeout 600000
+adb shell dumpsys power  | grep "Display Power"        # 要 state=ON
+adb shell dumpsys window | grep isStatusBarKeyguard     # 要 false
+adb shell input swipe 540 2100 540 900 250              # 无密码锁屏：上滑解锁
+
+# 1. 推包（vivo 默认勾选「安装后删除安装包」，每次都要重推）
+adb push app/build/outputs/apk/debug/app-debug.apk /sdcard/Download/Mika-28-min.apk
+
+# 2. 清掉旧安装器实例再拉起，等 9 秒（104MB 的包要解析）
+adb shell am force-stop com.android.packageinstaller
+adb shell am start -a android.intent.action.VIEW \
+  -d "file:///sdcard/Download/Mika-28-min.apk" -t "application/vnd.android.package-archive"
+sleep 9
+
+# 3. 现查 ok_button 坐标再点（会变，别写死）
+adb shell uiautomator dump /sdcard/i.xml    # 找 id/ok_button 的 bounds 中心
+adb shell input tap 540 2106
+
+# 4. 装完会弹「打开 / 完成」→ 直接点「打开」唤醒 App，别手动 am start
+#    （界面偶尔会自己关掉，那就用 monkey 兜底）
+
+# 5. 覆盖安装必杀 :helper，立刻重跑
+adb shell sh /sdcard/Android/data/com.wangzan101.mika/files/usb-start.sh
+adb shell ps -A | grep mika       # 要看到 shell 用户的 :helper
+```
+
+拔 USB 线**不会**杀 helper（`app_process` 起的独立 shell 进程），只有覆盖安装和手机重启会。
+
+### 验收：用预设问题绕开中文输入
+
+`adb input text` 喂不进中文，Compose 的自绘输入框连 `uiautomator dump` 都读不出内容（`text` 恒为空）。**点预设问题卡片**是唯一顺畅的路径：
+
+```bash
+adb shell monkey -p com.wangzan101.mika -c android.intent.category.LAUNCHER 1
+adb shell input tap 594 1429             # 预设问题卡片（bounds 按文本从 dump 现查）
+adb exec-out screencap -p > filled.png   # 确认输入框有字、右侧发送箭头变蓝
+adb shell input tap 966 2180             # 点发送（键盘没弹时）
+adb logcat -d | grep -A 18 "FATAL EXCEPTION"
+```
+
+**判据**：App 进程在 + `:helper` 在 + 无 `FATAL EXCEPTION`。任务报 `gaveup` / `failed` **不算崩溃** —— 那是模型判断做不下去，不是 API 缺失，看诊断 `[Recent runs]` 的 `error` vs `failed` 区分。
+
 ## 验收清单
 
 - [ ] `aapt2 dump badging` 的 minSdk 已是目标版本
 - [ ] App 冷启动无 `FATAL EXCEPTION`
-- [ ] 逐项手动触发主要路径（聊天/操作/浮层），每项都看一次 logcat
-- [ ] 自建 shell（若需要）：`ps -A | grep <pkg>:helper` 显示 **shell** 用户 + 常驻
+- [ ] 用预设问题走完一条真实任务，执行期间无崩溃
+- [ ] 自建 shell：`ps -A | grep <pkg>:helper` 显示 **shell** 用户 + 常驻
+- [ ] helper 能拿到任务列表（logcat 无 `cannot list tasks` / `topTaskId failed`）
 - [ ] 无障碍服务已连接（`settings get secure enabled_accessibility_services` 含目标包）
 - [ ] README 写明「哪些能力在低版本上永久缺失」
