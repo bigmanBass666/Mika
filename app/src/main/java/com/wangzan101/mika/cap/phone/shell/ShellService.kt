@@ -81,8 +81,53 @@ class ShellService(
     /** Mika 最后放进去的文字;还原前据此判断剪贴板还是不是 Mika 的(用户中途复制了别的就不动)。 */
     private var ourText: String? = null
 
+    /**
+     * 任务对象取字段的兼容层。Android 10+ 的任务对象是 android.app.TaskInfo(有 taskId/displayId/
+     * userId/topActivityType);Android 9 及更早是 ActivityManager.RunningTaskInfo(只有 id/topActivity/
+     * baseActivity)。同一个概念在这里映射到各自字段名;系统完全没有该字段时给默认值,不让整条链路失败。
+     */
+    private inner class TaskField(private val names: List<String>, private val dflt: () -> Any?) {
+        private val field by lazy {
+            names.firstNotNullOfOrNull { n -> runCatching { TASK_INFO.getField(n) }.getOrNull() }
+        }
+        fun get(t: Any): Any? = field?.let { runCatching { it.get(t) }.getOrNull() } ?: dflt()
+        fun getInt(t: Any): Int = (get(t) as? Number)?.toInt() ?: (dflt() as? Number)?.toInt() ?: -1
+        fun getLong(t: Any): Long = (get(t) as? Number)?.toLong() ?: 0L
+        fun getBoolean(t: Any): Boolean = (get(t) as? Boolean) ?: (dflt() as? Boolean) ?: false
+    }
+
+    private val fTaskId by lazy { TaskField(listOf("taskId", "id")) { -1 } }
+    private val fDisplayId by lazy { TaskField(listOf("displayId")) { Display.DEFAULT_DISPLAY } }
+    private val fUserId by lazy { TaskField(listOf("userId")) { -1 } }
+    private val fType by lazy { TaskField(listOf("topActivityType")) { ACTIVITY_TYPE_UNDEFINED } }
+    private val fTop by lazy { TaskField(listOf("topActivity")) { null } }
+    private val fBase by lazy { TaskField(listOf("baseActivity")) { null } }
+    private val fVisible by lazy { TaskField(listOf("isVisible")) { false } }
+    private val fToken by lazy { TaskField(listOf("token")) { null } }
+
+    /**
+     * IActivityTaskManager.getTasks 的参数形状随版本变:API 33+ 是四参(带 displayId),
+     * API 29~32 是三参,Android 9 的 IActivityManager 只有 (max, flags) 两参。
+     * 按方法实际形状挑,不要假设版本。
+     */
+    private fun rawTasks(displayId: Int?): List<Any> {
+        val methods = taskManager.javaClass.methods.filter { it.name == "getTasks" }
+        val args: Array<Any?> = when {
+            methods.any { it.parameterTypes.size == 4 } -> arrayOf(MAX_TASKS, false, false, displayId ?: Display.INVALID_DISPLAY)
+            methods.any { it.parameterTypes.size == 3 } -> arrayOf(MAX_TASKS, false, false)
+            methods.any { it.parameterTypes.size == 2 } -> arrayOf(MAX_TASKS, 0)   // flags=0:不过滤
+            else -> arrayOf(MAX_TASKS)
+        }
+        val m = methods.first { it.parameterTypes.size == args.size }
+        @Suppress("UNCHECKED_CAST")
+        return (m.invoke(taskManager, *args) as List<*>).filterNotNull()
+    }
+
     private val taskManager: Any by lazy {
-        Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null)!!
+        // 任务列表在 Android 10 才挪到 ActivityTaskManager;Android 9 及更早走 ActivityManager.getService()
+        val holder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "android.app.ActivityTaskManager"
+        else "android.app.ActivityManager"
+        Class.forName(holder).getMethod("getService").invoke(null)!!
     }
 
     override fun createDisplay(surface: Surface, width: Int, height: Int, dpi: Int): Int = try {
@@ -224,13 +269,13 @@ class ShellService(
     private fun onOtherOwnDisplay(packages: Collection<String>, displayId: Int, userId: Int? = null): Boolean {
         val others = synchronized(displays) { displays.keys.toSet() } - displayId
         if (others.isEmpty()) return false
-        val displayField = TASK_INFO.getField("displayId")
+        val displayField = fDisplayId
         return allTasks().any { t -> displayField.getInt(t) in others && packages.any { isCopy(t, it, userId) } }
     }
 
     /** 任务是 [packageName] 在 [userId] 那份用户里的那份(规则见 [sameCopy])。 */
     private fun isCopy(task: Any, packageName: String, userId: Int?): Boolean =
-        sameCopy(packagesOf(task), runCatching { TASK_INFO.getField("userId").getInt(task) }.getOrNull(), packageName, userId)
+        sameCopy(packagesOf(task), runCatching { fUserId.getInt(task) }.getOrNull(), packageName, userId)
 
     /**
      * 只有这个 App 的任务全在 Mika 的屏上时才结束进程再启动(回到初始页面)。
@@ -248,7 +293,7 @@ class ShellService(
             if (onOtherOwnDisplay(listOf(packageName), displayId, userId)) return START_IN_USE_BY_OTHER
             // 要从头开:上次任务留在主屏后面的那份是 Mika 自己留下的,先关掉,不算用户的状态
             dropKept(packageName, userId)
-            val displayField = TASK_INFO.getField("displayId")
+            val displayField = fDisplayId
             val taskDisplays = allTasks().filter { isCopy(it, packageName, userId) }.map { displayField.getInt(it) }
             ColdStart.decide(taskDisplays, displayId, inUseOnMainScreen(packageName, userId))
         } catch (t: Throwable) {
@@ -506,13 +551,13 @@ class ShellService(
             .also { if (it == null) Log.e(TAG, "cannot resolve ${intent.action}") }
     }
 
-    private fun packagesOf(task: Any): List<String> = listOf("baseActivity", "topActivity").mapNotNull {
-        (TASK_INFO.getField(it).get(task) as? ComponentName)?.packageName
+    private fun packagesOf(task: Any): List<String> = listOf(fBase, fTop).mapNotNull {
+        (it.get(task) as? ComponentName)?.packageName
     }
 
     /** 该包在主屏有可见任务,或者就是主屏最上面的任务。[userId] 不为空时只看那份用户里的(见 [sameCopy])。 */
     private fun inUseOnMainScreen(packageName: String, userId: Int? = null): Boolean {
-        val visibleField = runCatching { TASK_INFO.getField("isVisible") }.getOrNull()
+        val visibleField = runCatching { fVisible }.getOrNull()
         return tasksOn(Display.DEFAULT_DISPLAY).withIndex().any { (index, task) ->
             isCopy(task, packageName, userId) && (visibleField?.getBoolean(task) ?: (index == 0))
         }
@@ -522,37 +567,19 @@ class ShellService(
      * IActivityTaskManager.getTasks:按最近使用排序,shell 持有 REAL_GET_TASKS,能看到所有 App 的任务。
      * API 33+ 有带 displayId 的重载,优先用它;更早的版本取全部再按 TaskInfo.displayId 过滤。
      */
-    private fun tasksOn(displayId: Int): List<Any> {
-        val methods = taskManager.javaClass.methods.filter { it.name == "getTasks" }
-        val withDisplay = methods.firstOrNull { it.parameterTypes.size == 4 }
-        val tasks = if (withDisplay != null) {
-            withDisplay.invoke(taskManager, MAX_TASKS, false, false, displayId)
-        } else {
-            methods.first { it.parameterTypes.size == 3 }.invoke(taskManager, MAX_TASKS, false, false)
-        } as List<*>
-        val displayField = TASK_INFO.getField("displayId")
-        return tasks.filterNotNull().filter { displayField.getInt(it) == displayId }
-    }
+    private fun tasksOn(displayId: Int): List<Any> =
+        rawTasks(displayId).filter { fDisplayId.getInt(it) == displayId }
 
     /** 所有屏上的任务:带屏号的重载传 INVALID_DISPLAY 即不按屏过滤。 */
-    private fun allTasks(): List<Any> {
-        val methods = taskManager.javaClass.methods.filter { it.name == "getTasks" }
-        val withDisplay = methods.firstOrNull { it.parameterTypes.size == 4 }
-        val tasks = if (withDisplay != null) {
-            withDisplay.invoke(taskManager, MAX_TASKS, false, false, Display.INVALID_DISPLAY)
-        } else {
-            methods.first { it.parameterTypes.size == 3 }.invoke(taskManager, MAX_TASKS, false, false)
-        } as List<*>
-        return tasks.filterNotNull()
-    }
+    private fun allTasks(): List<Any> = rawTasks(null)
 
     private fun task(taskId: Int): Any? {
-        val idField = TASK_INFO.getField("taskId")
+        val idField = fTaskId
         return allTasks().firstOrNull { idField.getInt(it) == taskId }
     }
 
     override fun displayOfTask(taskId: Int): Int = try {
-        task(taskId)?.let { TASK_INFO.getField("displayId").getInt(it) } ?: -1
+        task(taskId)?.let { fDisplayId.getInt(it) } ?: -1
     } catch (t: Throwable) {
         Log.e(TAG, "displayOfTask failed", t)
         -1
@@ -560,7 +587,7 @@ class ShellService(
 
     override fun displayOfPackage(packageName: String): Int = try {
         val ours = synchronized(displays) { displays.keys.toSet() }
-        val displayField = TASK_INFO.getField("displayId")
+        val displayField = fDisplayId
         allTasks().filter { packageName in packagesOf(it) }.map { displayField.getInt(it) }.firstOrNull { it in ours } ?: -1
     } catch (t: Throwable) {
         Log.e(TAG, "displayOfPackage failed", t)
@@ -569,7 +596,7 @@ class ShellService(
 
     override fun displayOfPackageInUser(packageName: String, userId: Int): Int = try {
         val ours = synchronized(displays) { displays.keys.toSet() }
-        val displayField = TASK_INFO.getField("displayId")
+        val displayField = fDisplayId
         allTasks().filter { isCopy(it, packageName, userId) }.map { displayField.getInt(it) }.firstOrNull { it in ours } ?: -1
     } catch (t: Throwable) {
         Log.e(TAG, "displayOfPackageInUser failed", t)
@@ -578,7 +605,7 @@ class ShellService(
 
     override fun packageOfTask(taskId: Int): String? = try {
         task(taskId)?.let { t ->
-            listOf("topActivity", "baseActivity").firstNotNullOfOrNull { (TASK_INFO.getField(it).get(t) as? ComponentName)?.packageName }
+            listOf(fTop, fBase).firstNotNullOfOrNull { (it.get(t) as? ComponentName)?.packageName }
         }
     } catch (t: Throwable) {
         Log.e(TAG, "packageOfTask failed", t)
@@ -586,7 +613,7 @@ class ShellService(
     }
 
     override fun topTaskId(displayId: Int): Int = try {
-        tasksOn(displayId).firstOrNull()?.let { TASK_INFO.getField("taskId").getInt(it) } ?: -1
+        tasksOn(displayId).firstOrNull()?.let { fTaskId.getInt(it) } ?: -1
     } catch (t: Throwable) {
         Log.e(TAG, "topTaskId failed", t)
         -1
@@ -594,7 +621,7 @@ class ShellService(
 
     override fun topActivity(displayId: Int): String? = try {
         if (!ownDisplay(displayId)) null else tasksOn(displayId).firstOrNull()?.let {
-            (TASK_INFO.getField("topActivity").get(it) as? ComponentName)?.className
+            (fTop.get(it) as? ComponentName)?.className
         }
     } catch (t: Throwable) {
         Log.e(TAG, "topActivity failed", t)
@@ -639,7 +666,7 @@ class ShellService(
             val playing = playingUids()
             if (playing == null) notes += AppsAfterTask.NOTE_PLAYBACK_UNKNOWN
             val rows = tasksOn(displayId)
-            val idField = TASK_INFO.getField("taskId")
+            val idField = fTaskId
             val byId = rows.associateBy { idField.getInt(it) }
             val fates = AppsAfterTask.decide(rows.map { afterTaskRow(it, playing) },
                 AppsAfterTask.normalize(keep, myUser), AppsAfterTask.normalize(close, myUser))
@@ -686,11 +713,11 @@ class ShellService(
 
     /** 任务的一行给 [AppsAfterTask.decide]:键、是不是普通 App 的页面、是不是 Mika 自己的、此刻出不出声。 */
     private fun afterTaskRow(t: Any, playing: Map<Int, Set<String>>?): AppsAfterTask.Task {
-        val user = runCatching { TASK_INFO.getField("userId").getInt(t) }.getOrDefault(myUser)
+        val user = runCatching { fUserId.getInt(t) }.getOrDefault(myUser)
         val pkgs = packagesOf(t).distinct()
-        val type = runCatching { TASK_INFO.getField("topActivityType").getInt(t) }.getOrNull()
+        val type = runCatching { fType.getInt(t) }.getOrNull()
         return AppsAfterTask.Task(
-            id = TASK_INFO.getField("taskId").getInt(t),
+            id = fTaskId.getInt(t),
             keys = pkgs.map { AppsAfterTask.keyOf(it, user, myUser) },
             standard = type == null || type == ACTIVITY_TYPE_UNDEFINED || type == ACTIVITY_TYPE_STANDARD,
             own = pkgs.any { it in ownPackages },
@@ -706,7 +733,7 @@ class ShellService(
     /** 这个任务的 App(同一份用户里的)此刻在出声;读不到为 null。 */
     private fun playingIn(task: Any, playing: Map<Int, Set<String>>?): Boolean? {
         playing ?: return null
-        val user = runCatching { TASK_INFO.getField("userId").getInt(task) }.getOrNull()
+        val user = runCatching { fUserId.getInt(task) }.getOrNull()
         val pkgs = packagesOf(task)
         return playing.any { (uid, owners) -> (user == null || uid / PER_USER_RANGE == user) && pkgs.any { it in owners } }
     }
@@ -734,8 +761,8 @@ class ShellService(
 
     /** 把 Mika 屏上的任务 [row] 挪到主屏最后面(做法见 [finishDisplay])。 */
     private fun keepBehind(row: Any): Behind {
-        val id = TASK_INFO.getField("taskId").getInt(row)
-        val token = runCatching { TASK_INFO.getField("token").get(row) }.getOrNull() ?: return Behind.UNSUPPORTED
+        val id = fTaskId.getInt(row)
+        val token = runCatching { fToken.get(row) }.getOrNull() ?: return Behind.UNSUPPORTED
         if (!transact { wct -> wctCall(wct, "setHidden", token, true) }) return Behind.UNSUPPORTED
         if (!moveRoot(id, Display.DEFAULT_DISPLAY)) {
             transact { wct -> wctCall(wct, "setHidden", token, false) }
@@ -758,17 +785,17 @@ class ShellService(
     private fun ensureBehind(moved: Set<Int>, before: Int): Set<Int> {
         if (moved.isEmpty()) return emptySet()
         val removed = HashSet<Int>()
-        val visibleField = runCatching { TASK_INFO.getField("isVisible") }.getOrNull()
+        val visibleField = runCatching { fVisible }.getOrNull()
         fun inFront(): List<Any> = if (visibleField != null) {
-            tasksOn(Display.DEFAULT_DISPLAY).filter { TASK_INFO.getField("taskId").getInt(it) in moved && visibleField.getBoolean(it) }
-        } else listOfNotNull(tasksOn(Display.DEFAULT_DISPLAY).firstOrNull()?.takeIf { TASK_INFO.getField("taskId").getInt(it) in moved })
+            tasksOn(Display.DEFAULT_DISPLAY).filter { fTaskId.getInt(it) in moved && visibleField.getBoolean(it) }
+        } else listOfNotNull(tasksOn(Display.DEFAULT_DISPLAY).firstOrNull()?.takeIf { fTaskId.getInt(it) in moved })
         repeat(2) { attempt ->
             val front = inFront()
             if (front.isEmpty()) return removed
             for (row in front) {
-                val id = TASK_INFO.getField("taskId").getInt(row)
+                val id = fTaskId.getInt(row)
                 Log.w(TAG, "moved task $id is in front on the main screen (top was $before), sending it back")
-                val token = runCatching { TASK_INFO.getField("token").get(row) }.getOrNull()
+                val token = runCatching { fToken.get(row) }.getOrNull()
                 if (attempt == 1 || token == null || !transact { wct -> wctCall(wct, "reorder", token, false) }) {
                     removeTask(id)
                     removed += id
@@ -811,9 +838,9 @@ class ShellService(
     private fun keptOnMain(packageName: String, userId: Int): List<Any> {
         val ids = synchronized(kept) { kept.keys.toSet() }
         if (ids.isEmpty()) return emptyList()
-        val idField = TASK_INFO.getField("taskId")
-        val displayField = TASK_INFO.getField("displayId")
-        val visibleField = runCatching { TASK_INFO.getField("isVisible") }.getOrNull()
+        val idField = fTaskId
+        val displayField = fDisplayId
+        val visibleField = runCatching { fVisible }.getOrNull()
         val all = allTasks()
         // 已经不在的任务不再记着
         synchronized(kept) { kept.keys.retainAll(all.map { idField.getInt(it) }.toSet()) }
@@ -826,7 +853,7 @@ class ShellService(
     /** 把留在主屏后面的那个任务挪回 Mika 的屏;没有、或挪不了返回 false(调用方照常启动)。 */
     private fun resumeKept(displayId: Int, packageName: String, userId: Int): Boolean {
         val row = runCatching { keptOnMain(packageName, userId).firstOrNull() }.getOrNull() ?: return false
-        val id = TASK_INFO.getField("taskId").getInt(row)
+        val id = fTaskId.getInt(row)
         if (!moveRoot(id, displayId)) return false
         synchronized(kept) { kept.remove(id) }
         return true
@@ -835,7 +862,7 @@ class ShellService(
     /** 冷启动前关掉上次任务留在主屏后面的那份(Mika 自己留下的,不是用户的状态)。 */
     private fun dropKept(packageName: String, userId: Int) {
         keptOnMain(packageName, userId).forEach { t ->
-            val id = TASK_INFO.getField("taskId").getInt(t)
+            val id = fTaskId.getInt(t)
             if (removeTask(id)) synchronized(kept) { kept.remove(id) }
         }
     }
@@ -858,7 +885,7 @@ class ShellService(
     }
 
     override fun userOfTask(taskId: Int): Int = try {
-        task(taskId)?.let { TASK_INFO.getField("userId").getInt(it) } ?: -1
+        task(taskId)?.let { fUserId.getInt(it) } ?: -1
     } catch (t: Throwable) {
         Log.e(TAG, "userOfTask failed", t)
         -1
@@ -866,16 +893,16 @@ class ShellService(
 
     /** 所有屏上的任务,换成 [MainScreenLog.Task];页面种类读不到时当作普通 App 的页面。 */
     private fun taskRows(): List<MainScreenLog.Task> {
-        val id = TASK_INFO.getField("taskId")
-        val display = TASK_INFO.getField("displayId")
-        val user = runCatching { TASK_INFO.getField("userId") }.getOrNull()
-        val type = runCatching { TASK_INFO.getField("topActivityType") }.getOrNull()
+        val id = fTaskId
+        val display = fDisplayId
+        val user = runCatching { fUserId }.getOrNull()
+        val type = runCatching { fType }.getOrNull()
         return allTasks().map { t ->
-            val top = TASK_INFO.getField("topActivity").get(t) as? ComponentName
+            val top = fTop.get(t) as? ComponentName
             MainScreenLog.Task(
                 taskId = id.getInt(t),
                 displayId = display.getInt(t),
-                packageName = top?.packageName ?: (TASK_INFO.getField("baseActivity").get(t) as? ComponentName)?.packageName,
+                packageName = top?.packageName ?: (fBase.get(t) as? ComponentName)?.packageName,
                 userId = user?.getInt(t) ?: -1,
                 topActivity = top?.className,
                 standard = type?.getInt(t)?.let { it == ACTIVITY_TYPE_UNDEFINED || it == ACTIVITY_TYPE_STANDARD } ?: true,
@@ -1390,7 +1417,12 @@ class ShellService(
         private const val OPSTR_READ_CLIPBOARD = "android:read_clipboard"
         private const val READ_CLIPBOARD_IN_BACKGROUND = "android.permission.READ_CLIPBOARD_IN_BACKGROUND"
 
-        private val TASK_INFO: Class<*> by lazy { Class.forName("android.app.TaskInfo") }
+        // Android 10+ 是 android.app.TaskInfo;Android 9 及更早是 ActivityManager.RunningTaskInfo
+        // (字段也不同:只有 id/topActivity/baseActivity,没有 displayId/userId/topActivityType)
+        private val TASK_INFO: Class<*> by lazy {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Class.forName("android.app.TaskInfo")
+            else Class.forName("android.app.ActivityManager\$RunningTaskInfo")
+        }
         private val WCT: Class<*> by lazy { Class.forName("android.window.WindowContainerTransaction") }
         private const val INJECT_MODE_ASYNC = 0 // InputManager.INJECT_INPUT_EVENT_MODE_ASYNC
         private const val INJECT_MODE_WAIT_FOR_FINISH = 2 // InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH

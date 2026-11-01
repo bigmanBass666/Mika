@@ -78,7 +78,19 @@ open class ScreenAccessibility : AccessibilityService() {
         val displayId = displayOf(event)
         if (displayId == Display.INVALID_DISPLAY) return
         // API 33 以下系统会在回调返回后回收事件对象,订阅方异步读取前先复制一份
-        events.tryEmit(DisplayEvent(displayId, AccessibilityEvent(event)))
+        // 拷贝构造器 AccessibilityEvent(other) 是 API 30 才有的;Android 9 上手工复制读屏要用的字段
+        val copy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            AccessibilityEvent(event)
+        } else {
+            AccessibilityEvent.obtain().apply {
+                eventType = event.eventType
+                packageName = event.packageName
+                className = event.className
+                contentDescription = event.contentDescription
+                text.addAll(event.text)
+            }
+        }
+        events.tryEmit(DisplayEvent(displayId, copy))
     }
 
     override fun onInterrupt() = Unit
