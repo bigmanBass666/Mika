@@ -26,7 +26,9 @@ object AndroidAdb {
 
     // 设备端导出时不带 context;TLS 1.3 里空 context 与不带 context 的结果相同(RFC 8446 §7.5)
     val exporter = KeyingMaterialExporter { socket, label, length ->
-        SSLSockets.exportKeyingMaterial(socket, label, ByteArray(0), length) ?: throw SSLException("keying material export failed")
+        // exportKeyingMaterial 是 API 30 才有;Android 9 没有无线调试,走到这里只会以异常暴露
+        runCatching { SSLSockets.exportKeyingMaterial(socket, label, ByteArray(0), length) }
+            .getOrNull() ?: throw SSLException("keying material export failed (needs API 30)")
     }
 
     @Volatile private var source: AdbIdentitySource? = null

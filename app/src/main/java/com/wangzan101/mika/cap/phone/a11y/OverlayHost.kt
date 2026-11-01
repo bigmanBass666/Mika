@@ -304,7 +304,10 @@ class OverlayWindow internal constructor(
         try {
             withTimeoutOrNull(GONE_WAIT_MS) {
                 suspendCancellableCoroutine { cont ->
-                    frame.viewTreeObserver.registerFrameCommitCallback { if (cont.isActive) cont.resume(Unit) }
+                    // 帧提交回调只有 API 29+ 有,Android 9 上调用会 NoSuchMethodError。
+                    // 统一退回「等一次主线程序消息」:invalidate 后下一帧就会重绘,
+                    // 后面还有 GONE_FRAMES 个 Choreographer 帧等合成器换上,语义上够用。
+                    frame.post { if (cont.isActive) cont.resume(Unit) }
                     frame.invalidate()
                 }
             }

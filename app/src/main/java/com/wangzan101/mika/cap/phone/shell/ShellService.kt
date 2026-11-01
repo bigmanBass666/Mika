@@ -1150,8 +1150,14 @@ class ShellService(
         val granted = context.checkPermission(READ_CLIPBOARD_IN_BACKGROUND, Process.myPid(), Process.myUid()) ==
             PackageManager.PERMISSION_GRANTED
         val ops = context.getSystemService(AppOpsManager::class.java)
-        granted && ops.unsafeCheckOpNoThrow(OPSTR_READ_CLIPBOARD, Process.myUid(), ShellContext.SHELL_PACKAGE) ==
-            AppOpsManager.MODE_ALLOWED
+        // unsafeCheckOpNoThrow 是 API 29 才有;低版本用 checkOpNoThrow(判定语义相同,只是会多记一次 note)
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ops.unsafeCheckOpNoThrow(OPSTR_READ_CLIPBOARD, Process.myUid(), ShellContext.SHELL_PACKAGE)
+        } else {
+            @Suppress("DEPRECATION")
+            ops.checkOpNoThrow(OPSTR_READ_CLIPBOARD, Process.myUid(), ShellContext.SHELL_PACKAGE)
+        }
+        granted && mode == AppOpsManager.MODE_ALLOWED
     }.getOrDefault(false)
 
     private fun suppressOverlay(clip: ClipData): ClipData {

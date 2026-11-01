@@ -84,8 +84,16 @@ open class ScreenAccessibility : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     /** 指定屏上的窗口;该屏没有窗口(或不存在)时为空列表。 */
-    fun windowsOn(displayId: Int): List<AccessibilityWindowInfo> =
-        instance.value?.windowsOnAllDisplays?.get(displayId).orEmpty()
+    fun windowsOn(displayId: Int): List<AccessibilityWindowInfo> {
+        val svc = instance.value ?: return emptyList()
+        // getWindowsOnAllDisplays 是 API 30 才有;Android 9 直接调用会 NoSuchMethodError。
+        // 低版本退回当前屏的窗口(单屏设备语义等价,Android 9 也没有多屏投射)。
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            svc.windowsOnAllDisplays?.get(displayId).orEmpty()
+        } else {
+            svc.windows.orEmpty()
+        }
+    }
 
     /** 在指定屏上沿 [path] 做一次单指手势;完成返回 true,被取消或无法下发返回 false。 */
     suspend fun gesture(displayId: Int, path: Path, durationMs: Long): Boolean {
@@ -103,10 +111,10 @@ open class ScreenAccessibility : AccessibilityService() {
 
     private suspend fun dispatch(displayId: Int, strokes: List<GestureDescription.StrokeDescription>): Boolean {
         val service = instance.value ?: return false
-        val gesture = GestureDescription.Builder()
-            .setDisplayId(displayId)
-            .apply { strokes.forEach(::addStroke) }
-            .build()
+        val builder = GestureDescription.Builder()
+        // setDisplayId 是 API 30 才有;Android 9 只有主屏,不设就是主屏,语义等价
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) builder.setDisplayId(displayId)
+        val gesture = builder.apply { strokes.forEach(::addStroke) }.build()
         return suspendCancellableCoroutine { cont ->
             val callback = object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription) {

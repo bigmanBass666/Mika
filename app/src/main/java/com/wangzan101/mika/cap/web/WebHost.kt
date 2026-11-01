@@ -1,5 +1,6 @@
 package com.wangzan101.mika.cap.web
 
+import android.os.Build
 import android.app.Presentation
 import android.content.Context
 import android.graphics.Bitmap
@@ -111,6 +112,11 @@ class WebHost(private val context: Context, widthPx: Int, heightPx: Int, density
         }
 
         private fun addWindow(display: Display): FrameLayout? = try {
+            // createWindowContext 是 API 30 才有;Android 9 上这个后台私显窗口建不起来,
+            // 主动抛出去让 catch 分支退回 detached WebView(网页功能不受影响,只是没有独立窗口)
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                throw UnsupportedOperationException("createWindowContext needs API 30")
+            }
             val wctx = context.createDisplayContext(display)
                 .createWindowContext(WindowManager.LayoutParams.TYPE_PRIVATE_PRESENTATION, null)
             val wm = wctx.getSystemService(WindowManager::class.java)

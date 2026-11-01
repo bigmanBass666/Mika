@@ -165,7 +165,9 @@ data class DeviceFacts(
     companion object {
         const val ARM64 = "arm64-v8a"
         /** 手机操作的最低系统版本(安卓 12)。 */
-        const val MIN_PHONE_SDK = 31
+        // 上游卡 31(Android 12)是因为它只能靠「无线调试」自举 helper;本 fork 改走 USB 启动助手,
+        // Android 9(SDK 28)实测可用。与 Prerequisites.MIN_SDK 对齐(见 README 兼容性说明)。
+        const val MIN_PHONE_SDK = 28
         /** 安卓 14 起虚拟屏能有自己的焦点。 */
         const val OWN_FOCUS_SDK = 34
     }
