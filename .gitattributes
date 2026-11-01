@@ -1,5 +1,11 @@
 # 行尾策略:跟着仓库走,不依赖各台机器/各个 agent 的全局 git 配置
 # 索引里一律存 LF;工作区按下面的类型决定,避免 CRLF/LF 反复产生假 modified
+#
+# 为什么会有这份文件(2026-11,Android 9 适配期间):
+#   原先规则只存在于机器级的 ~/.gitattributes,仓库自身不自足 —— 浅克隆(--depth=1)、
+#   换一台机器、换一个 agent 或 CI 跑的时候属性不生效,结果 gradlew.bat 周期性显示
+#   modified(内容一个字没变,只是行尾在 CRLF/LF 之间翻)。把规则搬进仓库后,任何环境
+#   checkout 都拿到同一套行为。回滚:删掉本文件即可,全局 ~/.gitattributes 会重新兜底。
 * text=auto eol=lf
 
 # Windows 脚本在工作区保持 CRLF(cmd.exe 与部分构建工具按 CRLF 解析)
