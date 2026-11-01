@@ -5,7 +5,7 @@
 ## Boundaries
 
 - ✅ **Always**：改完构建 + 真机验证；每处兼容改动写中文注释说明原因（API 从哪版才有、低版本走什么替代）
-- ⚠️ **Ask first**：rebase 上游（现在落后 39 个提交）、调 `minSdk`/`compileSdk`、动 `.gitattributes`
+- ⚠️ **Ask first**：rebase 上游（`android9-compat-v2` 已同步上游，`android9-compat` 仍停在旧版当退路）、调 `minSdk`/`compileSdk`、动 `.gitattributes`
 - 🚫 **Never**：`git add -A`（`.toolchain/` 1.1G 会被卷进去）、改 `core.autocrlf`、提交构建产物
 
 ## 详细流程

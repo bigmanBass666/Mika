@@ -164,6 +164,43 @@ grep -rn "MIN_SDK\s*=\|sdkInt < " app/src/main core/src/main | head
 - **debug 签名变了，脚本里的 `certPin` 就失效**：每次重装都要让 App 重写启动脚本（脚本会带新的签名指纹）。
 - **`android:foregroundServiceType` 在低版本被忽略**，不会崩；别为它加守卫。
 
+## 合上游（实测一次零冲突）
+
+上游 57 个提交 / 597 文件，与本分支**零冲突**自动合并。原因：兼容补丁全落在边界守卫（`if (SDK_INT >= Build.VERSION_CODES.R)`），上游全落在功能实现，改的是不同区域。
+
+```bash
+# 1. 从当前可用分支开新分支，别动旧分支
+git checkout -b android9-compat-v2
+git merge origin/main --no-ff --no-commit
+git diff --name-only --diff-filter=U          # 有冲突才解；实测为空
+
+# 2. 看合并带进来什么依赖
+git diff --cached app/build.gradle.kts | grep -E "^\+.*(implementation|api\()"
+
+# 3. 确认兼容补丁全在（这四行是底线）
+grep -n "minSdk" app/build.gradle.kts
+grep -c "TaskField\|fTaskId" app/src/main/java/com/wangzan101/mika/cap/phone/shell/ShellService.kt
+grep -n "MIN_SDK" app/src/main/java/com/wangzan101/mika/settings/Prerequisites.kt
+grep -n "MIN_PHONE_SDK" core/src/main/kotlin/com/wangzan101/mika/core/selfcheck/SelfCheck.kt
+
+# 4. 扫新增代码里没守卫的高危 API（清单见下）
+# 5. 构建 → 装机 → 真机跑一条预设问题
+```
+
+**先算真冲突面再决定要不要合**，别被提交数吓住：
+
+```bash
+MB=$(git merge-base HEAD origin/main)
+git diff --name-only $MB..origin/main | sort > /tmp/theirs.txt
+git diff --name-only $MB..HEAD       | sort > /tmp/ours.txt
+comm -12 /tmp/ours.txt /tmp/theirs.txt     # 实测：20 个改动文件里只撞 6 个
+```
+
+**坑**：守卫写法是 `Build.VERSION_CODES.R`，grep `SDK_INT >= R` 会漏报，误以为补丁丢了。
+
+**高危 API 清单**（合并后逐个人工确认有无守卫）：
+`takeScreenshot` `createWindowContext` `getWindowsOnAllDisplays` `setDisplayId` `stateDescription` `exportKeyingMaterial` `getInstallSourceInfo` `unsafeCheckOpNoThrow` `fitInsetsTypes` `hasUserSetImportance`
+
 ## 装机与验收流程（vivo + adb，已实战验证）
 
 `adb install` 一律 `Failure [-200]`，必须走 UI。**装前必须确认屏幕亮着且已解锁** —— 息屏/锁屏时安装器会被拉到后台，`input tap` 全部落空，表现就是「安装没反应」。
