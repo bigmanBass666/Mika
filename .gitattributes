@@ -1,1 +1,37 @@
+# 行尾策略:跟着仓库走,不依赖各台机器/各个 agent 的全局 git 配置
+# 索引里一律存 LF;工作区按下面的类型决定,避免 CRLF/LF 反复产生假 modified
+* text=auto eol=lf
+
+# Windows 脚本在工作区保持 CRLF(cmd.exe 与部分构建工具按 CRLF 解析)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+
+# 二进制:不做行尾转换,也不做文本 diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.jar binary
+*.so binary
+*.dex binary
+*.apk binary
+*.aab binary
+*.xz binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.7z binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.mp4 binary
+*.webm binary
+*.pdf binary
+
+# 沙箱资产:保持 LF 原样(与源码里的路径契约一致)
 app/src/main/assets/sandbox/mika text eol=lf
