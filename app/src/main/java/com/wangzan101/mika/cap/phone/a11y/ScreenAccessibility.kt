@@ -139,7 +139,13 @@ open class ScreenAccessibility : AccessibilityService() {
         return screenshotOnce()
     }
 
-    private suspend fun screenshotOnce(): MainShot = suspendCancellableCoroutine { cont ->
+    private suspend fun screenshotOnce(): MainShot =
+        // Android 11 以下没有 AccessibilityService.takeScreenshot():直接返回失败(-1 = 系统不支持),让调用方降级
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) MainShot.Failed(-1)
+        else screenshotOnceModern()
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+    private suspend fun screenshotOnceModern(): MainShot = suspendCancellableCoroutine { cont ->
         val service = instance.value
         if (service == null) {
             cont.resume(MainShot.Failed(ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS))

@@ -126,7 +126,11 @@ object PairingNotifier {
     fun ensureChannel(context: Context): ChannelPlan {
         val nm = context.getSystemService(NotificationManager::class.java)
         val existing = PairingChannel.IDS.mapNotNull { id ->
-            nm.getNotificationChannel(id)?.let { ChannelSnapshot(id, it.importance, it.hasUserSetImportance()) }
+            nm.getNotificationChannel(id)?.let {
+                // hasUserSetImportance() 是 Android 10 (API 29) 才加的;更早系统一律当作「用户没手动改过」
+                val userSet = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && it.hasUserSetImportance()
+                ChannelSnapshot(id, it.importance, userSet)
+            }
         }
         val plan = PairingChannel.plan(existing)
         if (plan is ChannelPlan.Create) {

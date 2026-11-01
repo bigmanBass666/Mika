@@ -37,8 +37,14 @@ import kotlin.system.exitProcess
 object HelperProcess {
     private const val TAG = "MikaHelper"
 
+    /** 调试用:app_process 环境里 Log 与 stderr 都看不到,把关键步骤追加写到文件 */
+    private fun mikaDbg(msg: String) {
+        runCatching { File("/data/local/tmp/mika-dbg.txt").appendText(msg + "\n") }
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
+        mikaDbg("main start args=${args.size} sdk=${android.os.Build.VERSION.SDK_INT}")
         if (args.size < 3) {
             Log.e(TAG, "usage: HelperMain <package> <uid> <cert-sha256> (nonce on stdin)")
             exitProcess(2)
@@ -96,7 +102,12 @@ object HelperProcess {
         }
 
         fun start(launchNonce: String) = worker.post {
-            when (deliver(launchNonce)) {
+            val outcome = try { deliver(launchNonce) } catch (t: Throwable) {
+                mikaDbg("deliver threw: ${t.javaClass.name}: ${t.message}")
+                mikaDbg(t.stackTraceToString().take(1500))
+                exitProcess(1)
+            }
+            when (outcome) {
                 Outcome.Accepted -> {
                     // Mika 收下了这一个:之前起的(或残留的)助手实例都该走了
                     killOtherInstances()
@@ -121,15 +132,29 @@ object HelperProcess {
             }
             val am = Class.forName("android.app.ActivityManager").getMethod("getService").invoke(null)!!
             val token = Binder()
+            mikaDbg("deliver: authority=$authority userId=$userId sdk=${android.os.Build.VERSION.SDK_INT} am=${am.javaClass.name}")
             val holder = try {
-                am.javaClass.getMethod(
-                    "getContentProviderExternal", String::class.java, Int::class.javaPrimitiveType,
-                    IBinder::class.java, String::class.java,
-                ).invoke(am, authority, userId, token, TAG)
+                // Android 11 起多了一个 tag 参数;更早的系统只有三参重载
+                runCatching {
+                    am.javaClass.getMethod(
+                        "getContentProviderExternal", String::class.java, Int::class.javaPrimitiveType,
+                        IBinder::class.java, String::class.java,
+                    ).invoke(am, authority, userId, token, TAG)
+                }.recoverCatching {
+                    am.javaClass.getMethod(
+                        "getContentProviderExternal", String::class.java, Int::class.javaPrimitiveType,
+                        IBinder::class.java,
+                    ).invoke(am, authority, userId, token)
+                }.getOrThrow()
             } catch (t: Throwable) {
                 Log.w(TAG, "getContentProviderExternal failed", t)
+                mikaDbg("getContentProviderExternal threw: ${t.javaClass.simpleName}: ${t.message}")
                 return Outcome.Failed
-            } ?: return Outcome.Failed
+            } ?: run {
+                Log.w(TAG, "getContentProviderExternal returned null: authority=$authority userId=$userId sdk=${android.os.Build.VERSION.SDK_INT}")
+                mikaDbg("holder is null")
+                return Outcome.Failed
+            }
             try {
                 // 同名 authority 只可能属于一个包;还是核对一下,不把 Binder 交给 Mika 以外的 App
                 val info = holder.javaClass.getField("info").get(holder) as? ProviderInfo
@@ -150,11 +175,24 @@ object HelperProcess {
                         putLong(HelperHandoff.KEY_GAVE_UP_AT, r.gaveUpAtMs)
                     }
                 }
-                val call = provider.javaClass.methods.first {
-                    it.name == "call" && it.parameterTypes.size == 5 && it.parameterTypes[0] == AttributionSource::class.java
+                // Android 11 起 ContentProvider.call 多了带 AttributionSource 的五参重载;更早的系统只有三参
+                val call5 = provider.javaClass.methods.firstOrNull {
+                    it.name == "call" && it.parameterTypes.size == 5 &&
+                        it.parameterTypes[0].name == "android.content.AttributionSource"
                 }
-                val caller = AttributionSource.Builder(Process.myUid()).setPackageName(ShellContext.SHELL_PACKAGE).build()
-                val result = call.invoke(provider, caller, authority, HelperHandoff.METHOD_ATTACH, null, extras) as Bundle?
+                val result = if (call5 != null) {
+                    val caller = AttributionSource.Builder(Process.myUid()).setPackageName(ShellContext.SHELL_PACKAGE).build()
+                    call5.invoke(provider, caller, authority, HelperHandoff.METHOD_ATTACH, null, extras) as Bundle?
+                } else {
+                    // Android 10 及更早:拿到的是 IContentProvider 代理,它的 call 是
+                    // (callingPkg, method, arg, extras) 四参,不是 ContentProvider 的三参
+                    provider.javaClass.methods.first {
+                        it.name == "call" && it.parameterTypes.size == 4 &&
+                            it.parameterTypes[0] == String::class.java &&
+                            it.parameterTypes[1] == String::class.java &&
+                            it.parameterTypes[2] == String::class.java
+                    }.invoke(provider, ShellContext.SHELL_PACKAGE, HelperHandoff.METHOD_ATTACH, null, extras) as Bundle?
+                }
                 if (result?.getBoolean(HelperHandoff.KEY_ACCEPTED) != true) {
                     Log.w(TAG, "handoff rejected: ${result?.getString(HelperHandoff.KEY_REASON)}")
                     return Outcome.Rejected
@@ -171,6 +209,8 @@ object HelperProcess {
                 return Outcome.Accepted
             } catch (t: Throwable) {
                 Log.w(TAG, "handoff failed", t)
+                mikaDbg("handoff failed: ${t.javaClass.name}: ${t.message}")
+                mikaDbg(t.stackTraceToString().take(1500))
                 return Outcome.Failed
             } finally {
                 runCatching {

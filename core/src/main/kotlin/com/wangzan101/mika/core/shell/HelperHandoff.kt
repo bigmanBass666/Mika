@@ -87,6 +87,9 @@ object HelperHandoff {
             |  exit 1
             |fi
             |n=${quote(nonce)}
+            |# Android 9 及更早:app_process 以 shell 身份运行时改不了 /data/dalvik-cache 的所有权,会 Abort;
+            |# 把 ANDROID_DATA 指到 shell 可写的目录,让它走 imageless 模式(Android 10 起没有这个问题)
+            |if [ "${'$'}(getprop ro.build.version.sdk)" -lt 29 ]; then export ANDROID_DATA=/data/local/tmp; fi
             |(echo "${'$'}n" | CLASSPATH=${quote(apkPath)} nohup setsid app_process /system/bin --nice-name=$name $HELPER_CLASS ${quote(packageName)} $appUid ${quote(certPin)} >/dev/null 2>&1 &)
             |sleep 2
             |if pidof $name >/dev/null 2>&1; then

@@ -1,3 +1,22 @@
+> ### 📱 兼容性 Fork 说明
+>
+> **本仓库是 [wangzan101/Mika](https://github.com/wangzan101/Mika) 的兼容性分支，只为让 Mika 跑在 Android 9（SDK 28）的老机型上** —— 具体目标是 **vivo Z3（V1813BT / PD1813D，Android 9，arm64）**。
+>
+> 上游要求 Android 11+（操作手机 App 需要 12+，推荐 14+）。本分支把 `minSdk` 降到 28，并为 13 处「上游只用新 API 写、没有旧版本分支」的地方补了降级路径，其中最关键的几处是：
+>
+> - 截图：`AccessibilityService.takeScreenshot`（API 30）→ 低版本走纯无障碍节点树，放弃 OCR
+> - 自建 shell：不再依赖 Android 11 的无线调试配对，改用 **USB 调试 + 电脑跑 `connect-computer` 脚本**（`app_process` 以 shell 身份起助手），并绕过 Android 9 的 `dalvik-cache` 所有权限制
+> - 助手交接协议：`getContentProviderExternal` / `IContentProvider.call` 的反射按系统版本回退到旧签名
+> - 前台服务、通知频道、正则 `\p{IsHan}`、`fitInsetsTypes` 等零散 API 差异
+>
+> ⚠️ **已知限制（受 Android 9 本身限制，改代码补不回来）**
+> - 没有「后台独立焦点」（Android 14 才完整）：Mika 操作 App 时会占用你的屏幕
+> - 无 OCR：只能通过无障碍节点树读屏，看不到图片/自绘界面里的内容
+> - Linux 沙箱不可用（`libmikarun.so` 依赖 API 29 的 `android_get_device_api_level`）
+> - 每次手机重启后，需要重新从电脑跑一次启动脚本
+>
+> 本项目是**单设备实验性分支**，不追求通用性。上游的功能、文档与发布请以 [wangzan101/Mika](https://github.com/wangzan101/Mika) 为准。遵循 Apache-2.0。
+
 <div align="center">
 
 <img src="docs/media/logo.png" alt="Mika" width="88" />

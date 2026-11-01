@@ -52,7 +52,9 @@ class UserUtterances {
         val QUOTED = Regex("[「『“\"]([^「」『』“”\"\n]+)[」』”\"]")
         val DIGITS = Regex("\\d+")
         val LATIN = Regex("[A-Za-z][A-Za-z0-9._-]{2,}")
-        val PLACE = Regex("\\p{IsHan}{2}(?:小区|大厦|广场|公寓|花园|单元|路|街|巷|弄|镇|村|号|楼|栋|室|区|县|市|省|园|苑|城|道|里|湾)")
+        // Android 9 的正则引擎不认 \p{IsHan}(那是 .NET 风格的 Unicode script 别名,会抛
+        // PatternSyntaxException: U_ILLEGAL_ARGUMENT_ERROR);改用等价的 CJK 汉字区间
+        val PLACE = Regex("[\\u4E00-\\u9FFF]{2}(?:小区|大厦|广场|公寓|花园|单元|路|街|巷|弄|镇|村|号|楼|栋|室|区|县|市|省|园|苑|城|道|里|湾)")
         val PERSON = Regex("用户的|用户|我的|我")
     }
 }

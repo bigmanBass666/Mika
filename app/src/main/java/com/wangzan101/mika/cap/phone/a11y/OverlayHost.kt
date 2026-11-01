@@ -6,6 +6,7 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.util.Log
 import android.os.Handler
+import android.os.Build
 import android.os.Looper
 import android.os.SystemClock
 import android.view.Choreographer
@@ -143,8 +144,13 @@ class OverlayHost internal constructor(private val service: ScreenAccessibility)
             PixelFormat.TRANSLUCENT,
         ).apply {
             // 按整块屏幕摆,不让系统再把窗口挤进状态栏、导航栏以内:要避开哪里由调用方按 area() 定
-            fitInsetsTypes = 0
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            // fitInsetsTypes 与 CUTOUT_MODE_ALWAYS 都是 Android 11 (API 30) 才有的,更早的系统默认按整屏摆
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                fitInsetsTypes = 0
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
             place(placement)
         }
         val window = OverlayWindow(this, frame, params, owners)

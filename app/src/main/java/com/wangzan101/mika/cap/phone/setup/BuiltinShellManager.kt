@@ -229,8 +229,11 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
     }
 
     companion object {
-        /** 内置助手从安卓 12 起启用;旧系统使用不带较新屏幕标志的兼容路径。 */
-        const val MIN_SDK = Build.VERSION_CODES.S
+        /**
+         * 内置助手从安卓 12 起启用;旧系统使用不带较新屏幕标志的兼容路径。
+         * 降到 28 是为了让「用电脑 USB 启动」这条路在 Android 9 上也能走(无线调试配对仍只有 12+ 能用)。
+         */
+        const val MIN_SDK = Build.VERSION_CODES.P
         private const val PREFS = "builtin_shell"
         /** 安卓原版 adbd 把无线调试的连接端口写在这个系统属性里;读不到时靠缓存、mDNS、扫本机端口和用户填的端口。 */
         private const val TLS_PORT_PROPERTY = "service.adb.tls.port"

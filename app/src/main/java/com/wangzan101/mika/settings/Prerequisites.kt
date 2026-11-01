@@ -62,8 +62,8 @@ sealed interface Problem {
 
 /** 开始任务前的检查;界面据此提示,任务入口据此拦住。 */
 object Prerequisites {
-    /** 手机 App 操作的最低版本;聊天、网页和沙箱不需要这项能力。 */
-    const val MIN_SDK = 31
+    /** 手机 App 操作的最低版本;聊天、网页和沙箱不需要这项能力。降到 28(Android 9)是为了让「用电脑 USB 启动」助手这条路可用。 */
+    const val MIN_SDK = 28
     /** 安卓 14 起虚拟屏能有自己的焦点,不再影响主屏。 */
     const val OWN_FOCUS_SDK = 34
     private fun isWarning(p: Problem) = p == Problem.NotificationsOff || p == Problem.FocusMayLeak || p is Problem.AttentionLowered

@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import com.wangzan101.mika.R
 import com.wangzan101.mika.core.cap.sandbox.SandboxStatus
@@ -37,7 +38,12 @@ open class SandboxForeground : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // startForegroundService 之后必须尽快进入前台
-        startForeground(ID, notification(null), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        // 带 foregroundServiceType 的重载是 Android 10 (API 29) 才有的,Android 9 上必须退回两参版本
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(ID, notification(null), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(ID, notification(null))
+        }
         if (watcher?.isActive == true) return START_NOT_STICKY
         watcher = scope.launch {
             val nm = getSystemService(NotificationManager::class.java)
